@@ -1,0 +1,58 @@
+{
+  "TLS_OLD_PROTO": {
+    "name": "使用了不安全的通信协议",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
+    "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在已知加密弱点。",
+    "suggestion": "请在 Web 服务器 (Nginx/Apache) 配置中禁用 TLSv1.0/1.1，仅启用 TLSv1.2 和 TLSv1.3。"
+  },
+  "TLS_WEAK_CERT": {
+    "name": "数字证书密钥强度不足",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
+    "description": "检测到证书公钥长度小于 2048 位，不符合当前安全强度要求。",
+    "suggestion": "请重新生成私钥和证书，RSA 密钥长度至少为 2048 位，或使用 ECC 算法。"
+  },
+  "HTTP_BANNER_LEAK": {
+    "name": "Web 服务器版本信息泄露",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应最小化安装的组件和应用程序；应隐藏不必要的系统信息。",
+    "description": "HTTP 响应头 'Server' 字段泄露了具体的软件版本号，可被攻击者用于精准利用漏洞。",
+    "suggestion": "修改 Nginx 配置 'server_tokens off;' 或 Apache 'ServerTokens Prod' 以隐藏版本号。"
+  },
+  "SSH_WEAK_PASS": {
+    "name": "SSH 弱口令漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "应对登录用户进行身份标识和鉴别，身份鉴别信息应具有复杂度要求并定期更换。",
+    "description": "通过字典攻击成功获取了 SSH 登录凭证，攻击者可直接接管服务器。",
+    "suggestion": "1. 立即修改密码，长度>10位，包含大小写、数字及符号；2. 建议禁用密码登录，改用 SSH 密钥认证。"
+  },
+  "SSH_BANNER_LEAK": {
+    "name": "SSH 服务版本泄露",
+    "risk_level": "Low",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应隐藏不必要的系统和软件版本信息。",
+    "description": "SSH 连接建立时泄露了 OpenSSH 的具体版本号。",
+    "suggestion": "在 sshd_config 中设置 'DebianBanner no' (部分系统支持) 或通过防火墙限制访问来源。"
+  },
+  "DNS_ZONE_TRANSFER": {
+    "name": "DNS 区域传送漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全区域边界-边界防护",
+    "clause_content": "应关闭不需要的系统服务、默认共享和高危端口。",
+    "description": "DNS 服务器允许任意 IP 进行 AXFR 区域传送，导致内网域名拓扑结构完全泄露。",
+    "suggestion": "在 Bind9 配置中限制 'allow-transfer' 仅允许从 DNS 服务器 (Slave DNS) IP 访问。"
+  },
+  "TCP_PORT_OPEN": {
+    "name": "非必要端口开放",
+    "risk_level": "Info",
+    "clause_id": "G3-安全区域边界-访问控制",
+    "clause_content": "应在网络边界或区域之间根据访问控制策略设置访问控制规则。",
+    "description": "检测到端口处于开放状态。若该端口非业务必需，则违反了'默认拒绝'原则。",
+    "suggestion": "请核查该端口是否为业务必需。如果不是，请在防火墙或安全组中关闭该端口。"
+  }
+}

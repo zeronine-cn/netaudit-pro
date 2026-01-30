@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  netaudit:
+    build: .
+    container_name: netaudit-pro
+    ports:
+      - "8000:8000"
+    environment:
+      - API_KEY=${API_KEY}
+    volumes:
+      # 非常重要：数据库文件持久化
+      - ./data:/app/data
+    restart: unless-stopped
