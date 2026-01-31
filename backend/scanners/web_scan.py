@@ -6,11 +6,35 @@ import re
 from datetime import datetime
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
+from concurrent.futures import ThreadPoolExecutor
+
+# 离线探测常用的敏感路径集
+SENSITIVE_PATHS = [
+    "/.git/config",
+    "/.env",
+    "/phpinfo.php",
+    "/info.php",
+    "/.vscode/sftp.json",
+    "/admin/",
+    "/backup/",
+    "/config.php.bak",
+    "/.htaccess",
+    "/robots.txt",
+    "/server-status"
+]
+
+# 关键安全响应头检查列表
+SECURITY_HEADERS = [
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+    "Strict-Transport-Security",
+    "Referrer-Policy"
+]
 
 def verify_vhost(target: str, port: int, vhost: str):
     """
     验证域名是否真的是该 IP 承载的有效虚拟主机
-    通过 SNI 握手检查返回的证书是否包含该域名
     """
     try:
         context = ssl.create_default_context()
@@ -22,46 +46,81 @@ def verify_vhost(target: str, port: int, vhost: str):
                 cert_bin = ssock.getpeercert(True)
                 cert = x509.load_der_x509_certificate(cert_bin, default_backend())
                 
-                # 获取证书中所有的 SANs
                 try:
                     ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
                     sans = ext.value.get_values_for_type(x509.GeneralName)
-                    # 检查域名是否匹配 (支持通配符)
                     for san in sans:
                         pattern = san.replace('.', r'\.').replace('*', r'.*')
                         if re.fullmatch(pattern, vhost, re.IGNORECASE):
                             return True
                 except:
-                    # 如果没有 SAN，检查 CN
                     cn = str(cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value)
                     if cn.lower() == vhost.lower():
                         return True
         return False
     except:
-        # 如果是 HTTP (非加密)，尝试通过 Host 头请求判断
         try:
             r = requests.get(f"http://{target}:{port}", headers={"Host": vhost}, timeout=2, allow_redirects=False)
-            # 如果返回 404 或 421 (Misdirected Request)，通常说明 VHost 不存在
             return r.status_code not in [404, 421]
         except:
             return False
 
+def probe_sensitive_paths(base_url, headers):
+    """
+    并发探测敏感目录
+    """
+    exposed = []
+    
+    def check_path(path):
+        try:
+            full_url = f"{base_url.rstrip('/')}{path}"
+            # 仅做 HEAD 请求以减少流量，或者做 GET 但只读少量内容
+            r = requests.get(full_url, headers=headers, timeout=2, allow_redirects=False, verify=False)
+            # 排除 404, 403, 5xx，通常 200 或 3xx 可能代表存在
+            if r.status_code == 200:
+                # 二次校验：如果内容包含 404 文本（伪 404），则跳过
+                if "404" not in r.text[:200].lower():
+                    return {"path": path, "status": r.status_code}
+            return None
+        except:
+            return None
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(check_path, SENSITIVE_PATHS))
+        exposed = [r for r in results if r]
+    
+    return exposed
+
 def scan_http(target: str, port: int, vhost: str = None):
     try:
-        url = f"http://{target}:{port}"
-        if port == 443: url = f"https://{target}"
+        protocol = "https" if port == 443 or port == 8443 else "http"
+        url = f"{protocol}://{target}:{port}"
         
-        headers = {}
+        headers = {'User-Agent': 'NetAudit-Audit-Bot/3.1'}
         if vhost: headers['Host'] = vhost
             
-        response = requests.get(url, headers=headers, timeout=3, allow_redirects=False, verify=False)
+        response = requests.get(url, headers=headers, timeout=4, allow_redirects=False, verify=False)
         server_banner = response.headers.get('Server', 'Unknown')
+        
+        # 深度探测：敏感目录扫描
+        exposed_paths = probe_sensitive_paths(url, headers)
+        
+        # 深度探测：安全头分析
+        missing_headers = []
+        for sh in SECURITY_HEADERS:
+            if sh not in response.headers:
+                missing_headers.append(sh)
+
         return {
             "port": port,
             "status": "OPEN",
             "banner": server_banner,
             "headers": dict(response.headers),
-            "vhost_matched": vhost if vhost else target
+            "vhost_matched": vhost if vhost else target,
+            "deep_scan": {
+                "exposed_paths": exposed_paths,
+                "missing_headers": missing_headers
+            }
         }
     except Exception as e:
         return {"port": port, "status": "CLOSED", "error": str(e)}

@@ -1,3 +1,4 @@
+
 {
   "TLS_OLD_PROTO": {
     "name": "使用了不安全的通信协议",
@@ -22,6 +23,22 @@
     "clause_content": "应最小化安装的组件和应用程序；应隐藏不必要的系统信息。",
     "description": "HTTP 响应头 'Server' 字段泄露了具体的软件版本号，可被攻击者用于精准利用漏洞。",
     "suggestion": "修改 Nginx 配置 'server_tokens off;' 或 Apache 'ServerTokens Prod' 以隐藏版本号。"
+  },
+  "WEB_SENSITIVE_EXPOSURE": {
+    "name": "Web 敏感目录或文件暴露",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应能够发现可能存在的已知漏洞，并在经过充分测试评估后，及时进行修补；应最小化安装的组件和应用程序。",
+    "description": "探测到敏感路径（如 .git, .env, /admin 等）可直接被外部访问，可能导致源代码或配置信息泄露。",
+    "suggestion": "1. 删除生产环境中的开发测试文件；2. 在 Nginx/Apache 配置中针对敏感后缀或路径设置 'deny all'。"
+  },
+  "WEB_MISSING_HEADERS": {
+    "name": "Web 安全防护响应头缺失",
+    "risk_level": "Low",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应采取措施防范恶意的网络攻击。",
+    "description": "检测到响应头缺失 X-Frame-Options 或 CSP 等防护，容易遭受点击劫持或 XSS 攻击。",
+    "suggestion": "配置 Web 服务器添加：X-Frame-Options: SAMEORIGIN 和 Content-Security-Policy 相关策略。"
   },
   "SSH_WEAK_PASS": {
     "name": "SSH 弱口令漏洞",

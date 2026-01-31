@@ -1,3 +1,4 @@
+
 import json
 import os
 
@@ -21,11 +22,10 @@ class SecurityAnalyzer:
         banner_low = banner.lower()
         extra = extra_data or {}
         
-        # 1. SSH 弱口令检查 (深度逻辑优化)
+        # 1. SSH 弱口令检查
         if protocol == "SSH":
             weak_creds = extra.get("weak_creds", [])
             if weak_creds:
-                # 只要有凭据返回，即视为已攻陷
                 rule = self.rules.get("SSH_WEAK_PASS", {})
                 creds = weak_creds[0]
                 findings.append({
@@ -36,11 +36,11 @@ class SecurityAnalyzer:
                     "description": f"成功获取系统登录凭据：{creds['user']} / {creds['pass']}",
                     "detail_value": f"Exploit Data: Found Valid Credential pair on port {port}",
                     "suggestion": "1. 立即强制修改该账户密码；2. 启用多因素认证 (MFA)；3. 限制 SSH 来源 IP。",
-                    "mlps_clause": "G3-身份鉴别-用户身份校验",
+                    "mlps_clause": "G3-安全计算环境-身份鉴别",
                     "metadata": {"is_compromised": True}
                 })
 
-        # 2. TLS/HTTPS 检查
+        # 2. TLS/HTTPS 基础检查
         if protocol == "HTTPS" and "tls_results" in extra:
             tls = extra["tls_results"]
             if tls.get("weak_protocols"):
@@ -55,26 +55,44 @@ class SecurityAnalyzer:
                     rule = self.rules.get("TLS_WEAK_CERT", {})
                     findings.append(self._format_finding(f"TLS-CERT-SIZE-{port}", protocol, rule, f"当前 RSA 密钥长度: {info['key_size']} bit"))
 
-        # 3. DNS AXFR 检查
+        # 3. Web 深度探测分析
+        if protocol in ["HTTP", "HTTPS"] and "web_results" in extra:
+            web = extra["web_results"]
+            deep = web.get("deep_scan", {})
+            
+            # 敏感目录暴露
+            exposed = deep.get("exposed_paths", [])
+            if exposed:
+                rule = self.rules.get("WEB_SENSITIVE_EXPOSURE", {})
+                path_list = [f"{p['path']} (HTTP {p['status']})" for p in exposed]
+                findings.append(self._format_finding(f"WEB-EXPOSED-{port}", protocol, rule, f"发现敏感暴露路径: {', '.join(path_list)}"))
+            
+            # 安全头缺失
+            missing = deep.get("missing_headers", [])
+            if missing:
+                rule = self.rules.get("WEB_MISSING_HEADERS", {})
+                findings.append(self._format_finding(f"WEB-HEADERS-{port}", protocol, rule, f"缺失安全响应头: {', '.join(missing)}"))
+
+            # 指纹泄露
+            if any(x in banner_low for x in ["nginx", "apache", "iis"]):
+                rule = self.rules.get("HTTP_BANNER_LEAK", {})
+                findings.append(self._format_finding(f"WEB-BANNER-{port}", protocol, rule, banner))
+
+        # 4. DNS AXFR 检查
         if protocol == "DNS" and extra.get("dns_results"):
             dns = extra["dns_results"]
             if dns.get("vulnerable"):
                 rule = self.rules.get("DNS_ZONE_TRANSFER", {})
                 findings.append(self._format_finding(f"DNS-AXFR-{port}", protocol, rule, dns.get("detail", "")))
 
-        # 4. 指纹与版本泄露
+        # 5. 默认兜底
         if not findings:
             if protocol == "SSH" and "openssh" in banner_low:
                 rule = self.rules.get("SSH_BANNER_LEAK", {})
                 findings.append(self._format_finding(f"SSH-BANNER-{port}", protocol, rule, banner))
-            elif protocol in ["HTTP", "HTTPS"] and any(x in banner_low for x in ["nginx", "apache", "iis"]):
-                rule = self.rules.get("HTTP_BANNER_LEAK", {})
-                findings.append(self._format_finding(f"WEB-BANNER-{port}", protocol, rule, banner))
-        
-        # 默认兜底
-        if not findings:
-            rule = self.rules.get("TCP_PORT_OPEN", {})
-            findings.append(self._format_finding(f"PORT-{port}", protocol, rule, f"开放端口: {port}"))
+            else:
+                rule = self.rules.get("TCP_PORT_OPEN", {})
+                findings.append(self._format_finding(f"PORT-{port}", protocol, rule, f"开放端口: {port}"))
 
         return findings
 

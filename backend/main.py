@@ -47,7 +47,7 @@ class ScanRequest(BaseModel):
     dictionaries: Dict[str, str]
     mode: str = "快速扫描"
     enable_brute: bool = False
-    metadata: Optional[Dict[str, str]] = {} # 接收测评对象信息
+    metadata: Optional[Dict[str, str]] = {} 
 
 def parse_ports(port_str: str) -> List[int]:
     ports = set()
@@ -105,12 +105,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 if request.mode == "深度审计" and request.enable_brute:
                     user_list = request.dictionaries.get('usernames', 'admin').split('\n')
                     pass_list = request.dictionaries.get('passwords', '123456').split('\n')
-                    
-                    def ssh_progress_callback(sub_pct, sub_log):
-                        fine_pct = progress_base + int(sub_pct * 0.1) 
-                        update_progress(min(fine_pct, 90), sub_log)
-
-                    creds = brute_force_ssh(target_ip, port, user_list, pass_list, ssh_progress_callback)
+                    creds = brute_force_ssh(target_ip, port, user_list, pass_list)
                 
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": creds})
                 all_findings.extend(findings)
@@ -123,7 +118,12 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                     res = scan_http(target_ip, port, vhost=domain)
                     proto = "HTTPS" if port in https_p else "HTTP"
                     tls_res = check_tls_vulnerability(target_ip, port, vhost=domain) if port in https_p else {}
-                    domain_findings = analyzer.analyze_service(proto, port, res.get("banner", "Unknown"), {"tls_results": tls_res})
+                    
+                    # 关键逻辑：将 scan_http 的深度结果传给 analyzer
+                    domain_findings = analyzer.analyze_service(proto, port, res.get("banner", "Unknown"), {
+                        "tls_results": tls_res,
+                        "web_results": res
+                    })
                     for f in domain_findings:
                         if domain: f["domain"] = domain
                         all_findings.append(f)
@@ -154,12 +154,11 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         update_progress(95, "正在执行风险建模与评分...")
         score = analyzer.calculate_score(all_findings)
         
-        # 将元数据整合进 report
         report = {
             "target": target_ip, "score": score,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "defects": all_findings, "port_statuses": port_status_summary,
-            "metadata": request.metadata, # 保存测评对象信息
+            "metadata": request.metadata, 
             "summary": {
                 "high": len([d for d in all_findings if d["risk_level"] == "高危"]), 
                 "medium": len([d for d in all_findings if d["risk_level"] == "中危"]), 
