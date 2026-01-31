@@ -105,9 +105,15 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 if request.mode == "深度审计" and request.enable_brute:
                     user_list = request.dictionaries.get('usernames', 'admin').split('\n')
                     pass_list = request.dictionaries.get('passwords', '123456').split('\n')
-                    total_combinations = len(user_list) * len(pass_list)
-                    update_progress(progress_base, f"正在执行 SSH 弱口令爆破 (测试 {total_combinations} 组密码)...")
-                    creds = brute_force_ssh(target_ip, port, user_list, pass_list)
+                    
+                    # 定义 SSH 爆破过程中的进度回调逻辑
+                    def ssh_progress_callback(sub_pct, sub_log):
+                        # 将子进度映射到总进度区间
+                        # 假设 SSH 爆破占该端口扫描进度的 80%
+                        fine_pct = progress_base + int(sub_pct * 0.1) 
+                        update_progress(min(fine_pct, 90), sub_log)
+
+                    creds = brute_force_ssh(target_ip, port, user_list, pass_list, ssh_progress_callback)
                 
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": creds})
                 all_findings.extend(findings)

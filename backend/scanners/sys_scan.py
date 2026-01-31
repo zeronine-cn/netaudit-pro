@@ -1,7 +1,9 @@
+
 import socket
 import paramiko
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 配置日志记录
 logging.getLogger("paramiko").setLevel(logging.WARNING)
@@ -18,68 +20,73 @@ def check_ssh_banner(target: str, port: int):
     except Exception:
         return "SSH Connection Refused"
 
-def brute_force_ssh(target: str, port: int, usernames: list, passwords: list):
+def brute_force_ssh(target: str, port: int, usernames: list, passwords: list, on_step_callback=None):
     """
-    高性能、高稳定性的 SSH 弱口令审计函数
+    高性能并发 SSH 弱口令审计函数
+    使用线程池加速验证，并支持实时进度回调
     """
     found_creds = []
-    
-    # 策略配置
-    MAX_RETRIES = 2       # 网络错误重试次数
+    MAX_WORKERS = 5       # 建议并发数，不宜过高以防被防火墙拦截
     AUTH_TIMEOUT = 5      # 认证超时
-    BANNER_TIMEOUT = 10   # SSH Banner 响应超时 (关键)
-    DELAY_BETWEEN = 0.5   # 快速扫描步长
+    BANNER_TIMEOUT = 10   # Banner 响应超时
 
-    for user in [u.strip() for u in usernames if u.strip()]:
-        for pwd in [p.strip() for p in passwords if p.strip()]:
-            retry_count = 0
-            while retry_count < MAX_RETRIES:
-                client = paramiko.SSHClient()
-                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                
-                try:
-                    # 关键优化：禁用所有不必要的认证方法
-                    client.connect(
-                        hostname=target,
-                        port=port,
-                        username=user,
-                        password=pwd,
-                        timeout=AUTH_TIMEOUT,
-                        banner_timeout=BANNER_TIMEOUT,
-                        look_for_keys=False,
-                        allow_agent=False
-                    )
-                    # 登录成功
-                    found_creds.append({
-                        "user": user, 
-                        "pass": pwd,
-                        "is_compromised": True
-                    })
-                    client.close()
-                    return found_creds # 发现一个有效凭据即刻返回
+    # 构建任务队列
+    tasks = []
+    for u in [user.strip() for user in usernames if user.strip()]:
+        for p in [pwd.strip() for pwd in passwords if pwd.strip()]:
+            tasks.append((u, p))
 
-                except paramiko.AuthenticationException:
-                    # 账号密码错误，这是正常情况，继续下一个
-                    client.close()
-                    break 
+    total_tasks = len(tasks)
+    if total_tasks == 0:
+        return []
 
-                except (paramiko.SSHException, socket.error) as e:
-                    # 网络层错误，可能是被限速或连接过多
-                    retry_count += 1
-                    client.close()
-                    if "banner" in str(e).lower():
-                        # 如果是 Banner 超时，可能是目标响应慢，增加延迟
-                        time.sleep(2)
-                    else:
-                        time.sleep(DELAY_BETWEEN)
-                    continue
+    def attempt_login(user, pwd):
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=target,
+                port=port,
+                username=user,
+                password=pwd,
+                timeout=AUTH_TIMEOUT,
+                banner_timeout=BANNER_TIMEOUT,
+                look_for_keys=False,
+                allow_agent=False
+            )
+            # 登录成功
+            return {"user": user, "pass": pwd, "is_compromised": True}
+        except paramiko.AuthenticationException:
+            return None
+        except Exception:
+            return None
+        finally:
+            client.close()
 
-                except Exception:
-                    # 未知异常，跳过
-                    client.close()
-                    break
+    # 使用线程池执行并发验证
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_task = {executor.submit(attempt_login, u, p): (u, p) for u, p in tasks}
+        
+        completed_count = 0
+        for future in as_completed(future_to_task):
+            completed_count += 1
+            result = future.result()
             
-            # 账号间的小停顿，规避简单的 IDS
-            time.sleep(DELAY_BETWEEN)
+            # 每一步通过回调反馈进度给主进程
+            if on_step_callback:
+                current_pct = int((completed_count / total_tasks) * 100)
+                user, pwd = future_to_task[future]
+                on_step_callback(current_pct, f"正在验证凭据: {user} / {'*' * len(pwd)}")
+
+            if result:
+                # 核心逻辑：早停机制
+                # 发现一个有效凭据即刻尝试取消后续任务并返回
+                found_creds.append(result)
+                # 停止接收新任务
+                executor.shutdown(wait=False, cancel_futures=True)
+                return found_creds
+            
+            # 短暂休眠以缓解目标系统压力
+            time.sleep(0.1)
             
     return found_creds
