@@ -47,6 +47,7 @@ class ScanRequest(BaseModel):
     dictionaries: Dict[str, str]
     mode: str = "快速扫描"
     enable_brute: bool = False
+    metadata: Optional[Dict[str, str]] = {} # 接收测评对象信息
 
 def parse_ports(port_str: str) -> List[int]:
     ports = set()
@@ -101,15 +102,11 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             if port in ssh_p:
                 banner = check_ssh_banner(target_ip, port)
                 creds = []
-                # 只有在深度模式且用户勾选了弱口令审计时执行
                 if request.mode == "深度审计" and request.enable_brute:
                     user_list = request.dictionaries.get('usernames', 'admin').split('\n')
                     pass_list = request.dictionaries.get('passwords', '123456').split('\n')
                     
-                    # 定义 SSH 爆破过程中的进度回调逻辑
                     def ssh_progress_callback(sub_pct, sub_log):
-                        # 将子进度映射到总进度区间
-                        # 假设 SSH 爆破占该端口扫描进度的 80%
                         fine_pct = progress_base + int(sub_pct * 0.1) 
                         update_progress(min(fine_pct, 90), sub_log)
 
@@ -156,10 +153,13 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
         update_progress(95, "正在执行风险建模与评分...")
         score = analyzer.calculate_score(all_findings)
+        
+        # 将元数据整合进 report
         report = {
             "target": target_ip, "score": score,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "defects": all_findings, "port_statuses": port_status_summary,
+            "metadata": request.metadata, # 保存测评对象信息
             "summary": {
                 "high": len([d for d in all_findings if d["risk_level"] == "高危"]), 
                 "medium": len([d for d in all_findings if d["risk_level"] == "中危"]), 

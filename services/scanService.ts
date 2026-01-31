@@ -20,7 +20,8 @@ export const performScan = async (
   mode: ScanMode,
   enableBrute: boolean,
   onProgress: (pct: number, log: string) => void,
-  abortSignal: { cancelled: boolean }
+  abortSignal: { cancelled: boolean },
+  metadata?: any // 新增元数据参数
 ): Promise<ScanReport> => {
   
   try {
@@ -35,7 +36,8 @@ export const performScan = async (
         ports_config: portConfig,
         dictionaries: dicts,
         mode: mode,
-        enable_brute: enableBrute
+        enable_brute: enableBrute,
+        metadata: metadata // 发送到后端
       }),
     });
 
@@ -49,7 +51,7 @@ export const performScan = async (
 
     const statusUrl = getApiUrl(apiBaseUrl, `/api/scan/status/${task_id}`);
     
-    const MAX_POLLS = 1200; // 支持更长时间的深度审计
+    const MAX_POLLS = 1200; 
     let polls = 0;
 
     while (polls < MAX_POLLS) {

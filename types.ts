@@ -58,6 +58,13 @@ export interface ScanReport {
     medium: number;
     low: number;
   };
+  // 新增：测评对象元数据
+  metadata?: {
+    assetName: string;
+    securityLevel: string;
+    location: string;
+    evaluator: string;
+  };
 }
 
 export interface AppConfig {

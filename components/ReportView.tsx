@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { ScanReport } from '../types';
-import { Database, FileJson, Loader2, FileText, Printer, FileCode, CheckCircle2, Download, ShieldCheck, Target, ChevronRight, Activity, Clock, ShieldAlert, Zap, Globe } from 'lucide-react';
+import { Database, FileJson, Loader2, FileText, Printer, FileCode, CheckCircle2, Download, ShieldCheck, Target, ChevronRight, Activity, Clock, ShieldAlert, Zap, Globe, MapPin, UserCheck, Shield } from 'lucide-react';
 
 interface ReportViewProps {
   report: ScanReport | null;
@@ -24,7 +24,7 @@ const ReportView: React.FC<ReportViewProps> = ({ report }) => {
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     };
 
-    // @ts-ignore (html2pdf is global)
+    // @ts-ignore
     window.html2pdf().set(opt).from(element).save().then(() => {
       setIsExporting(null);
     });
@@ -34,28 +34,36 @@ const ReportView: React.FC<ReportViewProps> = ({ report }) => {
     if (!report) return;
     setIsExporting('MD');
 
-    const mdContent = `
-# 安全审计报告 (NetAudit)
+    const m = report.metadata || { assetName: '未命名资产', securityLevel: '三级', location: '未知', evaluator: '未知' };
 
-**资产目标**: ${report.target}
-**审计评分**: ${report.score} / 100
-**审计时间**: ${report.timestamp}
-**漏洞统计**: 高危(${report.summary.high}) 中危(${report.summary.medium}) 低危(${report.summary.low})
+    const mdContent = `
+# 安全审计报告 (NetAudit Pro)
+
+## 1. 测评对象基本信息
+- **设备名称**: ${m.assetName}
+- **等保等级**: ${m.securityLevel}
+- **物理位置**: ${m.location}
+- **审计负责人**: ${m.evaluator}
+- **目标 IP**: ${report.target}
+- **审计时间**: ${report.timestamp}
+
+## 2. 审计结论与评分
+**安全得分**: ${report.score} / 100
+**风险概览**: 高危(${report.summary.high}) 中危(${report.summary.medium}) 低危(${report.summary.low})
 
 ---
 
-## 1. 合规缺陷详情
+## 3. 合规缺陷详情
 ${report.defects.map(d => `
 ### [${d.risk_level}] ${d.check_item}
 - **涉及条款**: ${d.mlps_clause}
 - **风险描述**: ${d.description}
-- **审计证据**: ${d.detail_value || '详见系统快照'}
 - **建议措施**: ${d.suggestion}
 `).join('\n')}
 
 ---
 
-## 2. 资产端口画像
+## 4. 资产端口画像
 ${report.port_statuses.map(p => `- Port ${p.port} (${p.protocol}): ${p.detail}`).join('\n')}
 
 ---
@@ -94,135 +102,110 @@ ${report.port_statuses.map(p => `- Port ${p.port} (${p.protocol}): ${p.detail}`)
     );
   }
 
+  const meta = report.metadata || { assetName: '未命名资产', securityLevel: '三级', location: '未知', evaluator: '未知' };
+
   return (
     <div className="space-y-12 animate-in fade-in duration-1000 max-w-5xl mx-auto pb-20">
       
-      {/* 核心卡片容器：保险库风格 */}
-      <div className="tactical-card rounded-[3.5rem] border border-white/10 overflow-hidden relative group shadow-[0_0_100px_rgba(0,0,0,0.5)]">
-        {/* 背景扫描线 */}
+      <div className="tactical-card rounded-[3.5rem] border border-white/10 overflow-hidden relative group shadow-2xl">
         <div className="absolute inset-0 scanline-container opacity-10 pointer-events-none"></div>
         
         <div className="p-12 md:p-16 flex flex-col items-center text-center relative z-10">
-          <div className="w-24 h-24 bg-brand/10 border border-brand/20 rounded-3xl flex items-center justify-center mb-10 shadow-[0_0_80px_rgba(204,255,0,0.1)] group-hover:scale-105 transition-transform">
+          <div className="w-24 h-24 bg-brand/10 border border-brand/20 rounded-3xl flex items-center justify-center mb-10 shadow-xl">
             <ShieldCheck size={50} className="text-brand" />
           </div>
           
           <h2 className="text-6xl font-black italic uppercase tracking-tighter glow-text mb-2">档案导出终端</h2>
           <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.6em] mb-12">DEEP ARCHIVE EXPORT TERMINAL</p>
 
-          {/* 资产快照摘要 */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full max-w-3xl mb-16">
-            <div className="p-5 bg-white/[0.03] border border-white/5 rounded-2xl flex flex-col items-center gap-1">
-               <Globe size={14} className="text-info/60 mb-1" />
-               <span className="text-[9px] font-black text-white/30 uppercase">目标资产</span>
-               <span className="text-sm font-bold truncate w-full">{report.target}</span>
-            </div>
-            <div className="p-5 bg-white/[0.03] border border-white/5 rounded-2xl flex flex-col items-center gap-1">
-               <Zap size={14} className="text-brand/60 mb-1" />
-               <span className="text-[9px] font-black text-white/30 uppercase">审计评分</span>
-               <span className="text-xl font-black italic">{report.score}</span>
-            </div>
-            <div className="p-5 bg-danger/5 border border-danger/20 rounded-2xl flex flex-col items-center gap-1">
-               <ShieldAlert size={14} className="text-danger mb-1" />
-               <span className="text-[9px] font-black text-white/30 uppercase">高危风险</span>
-               <span className="text-xl font-black italic text-danger">{report.summary.high}</span>
-            </div>
-            <div className="p-5 bg-white/[0.03] border border-white/5 rounded-2xl flex flex-col items-center gap-1">
-               <Clock size={14} className="text-white/20 mb-1" />
-               <span className="text-[9px] font-black text-white/30 uppercase">导出时间</span>
-               <span className="text-[10px] font-bold opacity-60">NOW</span>
-            </div>
+          {/* 测评对象摘要 (UI 展示) */}
+          <div className="w-full max-w-3xl grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+              <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">设备名称</span>
+                  <span className="text-xs font-bold text-white truncate block">{meta.assetName}</span>
+              </div>
+              <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">等保等级</span>
+                  <span className="text-xs font-bold text-brand block">{meta.securityLevel}</span>
+              </div>
+              <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">物理位置</span>
+                  <span className="text-xs font-bold text-white/60 truncate block">{meta.location}</span>
+              </div>
+              <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">测评员</span>
+                  <span className="text-xs font-bold text-info block">{meta.evaluator}</span>
+              </div>
           </div>
 
-          {/* 操作按钮区 */}
           <div className="flex flex-wrap justify-center gap-6 w-full">
-             <button 
-               onClick={downloadPdf}
-               disabled={!!isExporting}
-               className="group relative px-10 py-6 bg-white text-black rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-brand transition-all active:scale-95 disabled:opacity-50 min-w-[260px] overflow-hidden"
-             >
-               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]"></div>
+             <button onClick={downloadPdf} disabled={!!isExporting} className="group relative px-10 py-6 bg-white text-black rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-brand transition-all disabled:opacity-50 min-w-[260px]">
                {isExporting === 'PDF' ? <Loader2 size={20} className="animate-spin" /> : <Printer size={20} />}
-               <div className="text-left">
-                  <span className="block leading-none">下载合规 PDF</span>
-                  <span className="text-[8px] opacity-60 font-bold block mt-1 tracking-widest">STANDARD AUDIT FORMAT</span>
-               </div>
+               <div className="text-left"><span className="block leading-none">下载合规 PDF</span><span className="text-[8px] opacity-60 font-bold block mt-1 tracking-widest">STANDARD AUDIT FORMAT</span></div>
              </button>
-             
-             <button 
-               onClick={downloadMarkdown}
-               disabled={!!isExporting}
-               className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 hover:border-info/50 transition-all active:scale-95 disabled:opacity-50 min-w-[260px]"
-             >
+             <button onClick={downloadMarkdown} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
                {isExporting === 'MD' ? <Loader2 size={20} className="animate-spin" /> : <FileCode size={20} className="text-info" />}
-               <div className="text-left">
-                  <span className="block leading-none">导出 Markdown</span>
-                  <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest">FOR SECURITY GEEKS</span>
-               </div>
+               <div className="text-left"><span className="block leading-none">导出 Markdown</span><span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest">FOR SECURITY GEEKS</span></div>
              </button>
-
-             <button 
-               onClick={exportToJson}
-               disabled={!!isExporting}
-               className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 hover:border-brand/50 transition-all active:scale-95 disabled:opacity-50 min-w-[260px]"
-             >
+             <button onClick={exportToJson} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
                {isExporting === 'JSON' ? <Loader2 size={20} className="animate-spin" /> : <FileJson size={20} className="text-brand" />}
-               <div className="text-left">
-                  <span className="block leading-none">JSON 数据流</span>
-                  <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest">SYSTEM INTEGRATION</span>
-               </div>
+               <div className="text-left"><span className="block leading-none">JSON 数据流</span><span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest">SYSTEM INTEGRATION</span></div>
              </button>
           </div>
         </div>
       </div>
 
-      {/* 隐藏的 PDF 模板渲染区 (保持原样) */}
+      {/* 隐藏的 PDF 模板：包含元数据表格 */}
       <div className="fixed -left-[4000px] top-0 pointer-events-none">
-        <div ref={pdfRef} className="w-[210mm] bg-white text-black p-12 font-sans leading-relaxed">
-          <div className="flex justify-between items-center border-b-[0.5pt] border-gray-200 pb-4 mb-12">
-            <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">NetAudit Technical Audit Report</span>
+        <div ref={pdfRef} className="w-[210mm] bg-white text-black p-12 font-sans">
+          <div className="flex justify-between items-center border-b border-gray-200 pb-4 mb-8">
+            <span className="text-[10px] font-bold text-gray-400 uppercase">NetAudit Technical Audit Report</span>
             <span className="text-[10px] font-bold text-gray-400">{report.timestamp}</span>
           </div>
-          <div className="mb-16">
-            <h1 className="text-4xl font-black uppercase tracking-tighter mb-4">Security Audit Findings</h1>
-            <div className="flex items-center gap-6">
-               <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 rounded text-[10px] font-bold uppercase">TARGET: {report.target}</div>
-               <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 rounded text-[10px] font-bold uppercase">SCORE: {report.score}/100</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-8 mb-16">
-             <div className="p-4 bg-red-50 border-l-4 border-red-500">
-                <div className="text-[8px] font-bold text-red-600 uppercase mb-1">High Risks</div>
-                <div className="text-2xl font-black">{report.summary.high}</div>
-             </div>
-             <div className="p-4 bg-orange-50 border-l-4 border-orange-500">
-                <div className="text-[8px] font-bold text-orange-600 uppercase mb-1">Medium Risks</div>
-                <div className="text-2xl font-black">{report.summary.medium}</div>
-             </div>
-             <div className="p-4 bg-blue-50 border-l-4 border-blue-500">
-                <div className="text-[8px] font-bold text-blue-600 uppercase mb-1">Low Risks</div>
-                <div className="text-2xl font-black">{report.summary.low}</div>
-             </div>
-          </div>
-          <div className="space-y-10">
-            <h3 className="text-xs font-black uppercase tracking-[0.3em] border-b-[0.5pt] border-gray-100 pb-2">Findings Matrix</h3>
+
+          <h1 className="text-3xl font-black uppercase mb-8">网络安全等级保护测评报告</h1>
+          
+          <h2 className="text-xs font-black uppercase mb-4 text-gray-400 border-b pb-1">1. 测评对象基本信息</h2>
+          <table className="w-full border-collapse border border-gray-200 text-xs mb-10">
+            <tbody>
+              <tr>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold w-1/4">测评对象名称</td>
+                <td className="border border-gray-200 p-3">{meta.assetName}</td>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold w-1/4">所属等保等级</td>
+                <td className="border border-gray-200 p-3">{meta.securityLevel}</td>
+              </tr>
+              <tr>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold">物理放置位置</td>
+                <td className="border border-gray-200 p-3">{meta.location}</td>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold">目标 IP 地址</td>
+                <td className="border border-gray-200 p-3 font-mono">{report.target}</td>
+              </tr>
+              <tr>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold">审计负责人</td>
+                <td className="border border-gray-200 p-3">{meta.evaluator}</td>
+                <td className="border border-gray-200 p-3 bg-gray-50 font-bold">安全评分总计</td>
+                <td className="border border-gray-200 p-3 font-bold text-blue-600">{report.score} / 100</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h2 className="text-xs font-black uppercase mb-4 text-gray-400 border-b pb-1">2. 漏洞发现清单</h2>
+          <div className="space-y-6">
             {report.defects.map((d, i) => (
-              <div key={i}>
-                <div className="flex justify-between items-start mb-2">
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2 py-0.5 text-[8px] font-black uppercase rounded ${d.risk_level === '高危' ? 'bg-red-600 text-white' : 'bg-orange-500 text-white'}`}>{d.risk_level}</span>
-                    <h4 className="font-bold text-sm tracking-tight">{d.check_item}</h4>
-                  </div>
-                  <span className="text-[9px] font-mono text-gray-400">{d.mlps_clause}</span>
+              <div key={i} className="border-l-2 border-gray-100 pl-4">
+                <div className="flex items-center gap-2 mb-1">
+                    <span className={`text-[8px] font-bold px-2 py-0.5 rounded ${d.risk_level === '高危' ? 'bg-red-500 text-white' : 'bg-orange-400 text-white'}`}>{d.risk_level}</span>
+                    <h4 className="font-bold text-sm">{d.check_item}</h4>
                 </div>
-                <p className="text-xs text-gray-600 mb-4 leading-relaxed pl-12">{d.description}</p>
-                <div className="ml-12 p-3 bg-gray-50 border border-gray-100 rounded text-[10px] text-gray-500 italic">
-                  <strong>Recommendation:</strong> {d.suggestion}
-                </div>
+                <p className="text-[10px] text-gray-500 mb-2 italic">{d.description}</p>
+                <div className="p-2 bg-gray-50 rounded text-[9px] text-gray-600 font-bold">整改建议: {d.suggestion}</div>
               </div>
             ))}
           </div>
-          <div className="mt-16 pt-8 border-t-[0.5pt] border-gray-100 text-center text-[9px] text-gray-400 uppercase tracking-widest font-bold">Confidential technical audit document</div>
+
+          <div className="mt-20 pt-8 border-t border-gray-100 text-center text-[8px] text-gray-400 uppercase tracking-widest font-bold">
+            此文件为 NetAudit Pro 生成的技术审计原始档案，仅限内部评估使用
+          </div>
         </div>
       </div>
     </div>
