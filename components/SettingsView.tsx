@@ -1,6 +1,6 @@
 
 import React, { useRef, useState } from 'react';
-import { Save, RefreshCw, Upload, Info, Cpu, Database, Network, ShieldEllipsis, Lock, FileText, CheckCircle2, AlertCircle, Loader2, Zap, BrainCircuit, Sparkles, KeyRound, ShieldAlert, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { Save, RefreshCw, Upload, Info, Cpu, Database, Network, ShieldEllipsis, Lock, FileText, CheckCircle2, AlertCircle, Loader2, Zap, BrainCircuit, Sparkles, KeyRound, ShieldAlert, ShieldCheck, Eye, EyeOff, LayoutTemplate, MapPin, UserCheck, Shield } from 'lucide-react';
 import { AppConfig } from '../types';
 
 interface SettingsViewProps {
@@ -38,6 +38,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
     setConfig(prev => ({
       ...prev,
       aiConfig: { ...prev.aiConfig, [key]: value }
+    }));
+  };
+
+  const handleDefaultMetadataChange = (key: keyof AppConfig['defaultMetadata'], value: string) => {
+    setConfig(prev => ({
+      ...prev,
+      defaultMetadata: { ...prev.defaultMetadata, [key]: value }
     }));
   };
 
@@ -111,18 +118,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
         <button 
             onClick={() => {
                 if(confirm('警告：此操作将清除所有当前配置并恢复到出厂状态。是否继续？')) {
-                    setConfig({
-                        apiBaseUrl: window.location.origin,
-                        adminPassword: 'admin888',
-                        ports: { ssh: '22', http: '80, 8080', https: '443, 8443', dns: '53' },
-                        dictionaries: { usernames: 'root\nadmin', passwords: 'password\n123456' },
-                        aiConfig: {
-                          provider: 'gemini',
-                          baseUrl: 'https://api.google.com',
-                          apiKey: '',
-                          model: 'gemini-3-pro-preview'
-                        }
-                    });
                     localStorage.removeItem('netaudit_config');
                     window.location.reload();
                 }
@@ -135,6 +130,54 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
 
       <div className="grid grid-cols-1 gap-10">
         
+        {/* 测评资产模板 (新功能) */}
+        <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info relative overflow-hidden bg-black/40 shadow-xl">
+           <div className="absolute top-0 left-0 w-2 h-full bg-info opacity-20"></div>
+           <div className="flex items-center gap-6 mb-10">
+              <div className="w-16 h-16 bg-info/20 rounded-2xl flex items-center justify-center text-info border border-info/20 shadow-lg">
+                <LayoutTemplate size={32} />
+              </div>
+              <div>
+                <h3 className="text-3xl font-black italic uppercase text-white/90">测评资产模板 (DEFAULT TEMPLATE)</h3>
+                <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.3em] mt-2 leading-relaxed">批量作业时自动填充的背景信息。若单次扫描留空，将自动引用此处配置。</p>
+              </div>
+           </div>
+
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              <div className="space-y-4">
+                 <label className="block text-[10px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">资产名称前缀</label>
+                 <div className="relative">
+                    <input value={config.defaultMetadata.assetNamePrefix} onChange={e => handleDefaultMetadataChange('assetNamePrefix', e.target.value)} className="w-full pl-12 pr-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-info font-bold mono focus:border-info outline-none transition-all" placeholder="SVR-" />
+                    <Database className="absolute left-4 top-1/2 -translate-y-1/2 text-white/10" size={18} />
+                 </div>
+              </div>
+              <div className="space-y-4">
+                 <label className="block text-[10px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">默认等保等级</label>
+                 <div className="relative">
+                    <select value={config.defaultMetadata.securityLevel} onChange={e => handleDefaultMetadataChange('securityLevel', e.target.value)} className="w-full pl-12 pr-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-brand font-bold focus:border-info outline-none transition-all appearance-none">
+                       <option value="二级">等保二级 (L2)</option>
+                       <option value="三级">等保三级 (L3)</option>
+                    </select>
+                    <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-white/10" size={18} />
+                 </div>
+              </div>
+              <div className="space-y-4">
+                 <label className="block text-[10px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">默认物理位置</label>
+                 <div className="relative">
+                    <input value={config.defaultMetadata.location} onChange={e => handleDefaultMetadataChange('location', e.target.value)} className="w-full pl-12 pr-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-white font-bold focus:border-info outline-none transition-all" placeholder="北京 A 机房" />
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-white/10" size={18} />
+                 </div>
+              </div>
+              <div className="space-y-4">
+                 <label className="block text-[10px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">默认审计负责人</label>
+                 <div className="relative">
+                    <input value={config.defaultMetadata.evaluator} onChange={e => handleDefaultMetadataChange('evaluator', e.target.value)} className="w-full pl-12 pr-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-white font-bold focus:border-info outline-none transition-all" placeholder="Admin" />
+                    <UserCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-white/10" size={18} />
+                 </div>
+              </div>
+           </div>
+        </div>
+
         {/* 通信链路配置 */}
         <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-brand relative overflow-hidden bg-black/40">
            <div className="absolute top-0 left-0 w-2 h-full bg-brand opacity-20"></div>
@@ -305,14 +348,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
                   <Info className="text-indigo-400 shrink-0" size={24} />
                   <p className="text-[11px] font-bold text-indigo-200/50 uppercase tracking-[0.1em] italic leading-relaxed">
                     安全说明：API 鉴权已支持手动填写（BYOK 模式）。若此项为空，系统将尝试调用底层安全底座（process.env.API_KEY）自动注入。
-                    {config.aiConfig.provider === 'custom' ? " 您只需配置对应的 Endpoint，系统会自动带上自定义授权令牌。" : " 此模式下直接与 Google 审计服务器建立链路，数据传输全程加密。"}
                   </p>
                </div>
             </div>
           </div>
         </div>
 
-        {/* 下方的端口和字典保持原样 */}
+        {/* 端口和字典 */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
           <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info bg-black/40">
             <h3 className="text-3xl font-black italic uppercase mb-10 flex items-center gap-5">

@@ -27,20 +27,31 @@ function App() {
     return savedLogs ? JSON.parse(savedLogs) : [];
   });
 
-  // 更新草稿状态，包含元数据
   const [scanDraft, setScanDraft] = useState({
     target: '127.0.0.1',
     domainStr: '', 
     portRange: '22, 80, 443, 3306',
     assetName: '',
-    securityLevel: '三级',
-    location: '',
-    evaluator: 'Admin'
+    securityLevel: '', // 留空则使用默认配置
+    location: '',      // 留空则使用默认配置
+    evaluator: ''       // 留空则使用默认配置
   });
   
   const [config, setConfig] = useState<AppConfig>(() => {
     const savedConfig = localStorage.getItem('netaudit_config');
-    if (savedConfig) return JSON.parse(savedConfig);
+    if (savedConfig) {
+        const parsed = JSON.parse(savedConfig);
+        // 确保新字段存在
+        if (!parsed.defaultMetadata) {
+            parsed.defaultMetadata = {
+                securityLevel: '三级',
+                location: '默认机房',
+                evaluator: 'Admin',
+                assetNamePrefix: 'ASSET-'
+            };
+        }
+        return parsed;
+    }
     return {
       apiBaseUrl: window.location.origin,
       adminPassword: 'admin888',
@@ -51,6 +62,12 @@ function App() {
         baseUrl: 'https://api.google.com',
         apiKey: '',
         model: 'gemini-3-pro-preview'
+      },
+      defaultMetadata: {
+        securityLevel: '三级',
+        location: '上海金桥机房',
+        evaluator: '审计员A',
+        assetNamePrefix: 'SVR-'
       }
     };
   });

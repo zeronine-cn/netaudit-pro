@@ -58,7 +58,6 @@ export interface ScanReport {
     medium: number;
     low: number;
   };
-  // 新增：测评对象元数据
   metadata?: {
     assetName: string;
     securityLevel: string;
@@ -85,5 +84,12 @@ export interface AppConfig {
     baseUrl: string;
     apiKey?: string;
     model: string;
+  };
+  // 新增：全局测评资产模板
+  defaultMetadata: {
+    securityLevel: string;
+    location: string;
+    evaluator: string;
+    assetNamePrefix: string;
   };
 }
