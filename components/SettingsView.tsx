@@ -155,7 +155,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
                  <label className="block text-[10px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">默认等保等级</label>
                  <div className="relative">
                     <select value={config.defaultMetadata.securityLevel} onChange={e => handleDefaultMetadataChange('securityLevel', e.target.value)} className="w-full pl-12 pr-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl text-brand font-bold focus:border-info outline-none transition-all appearance-none">
-                       <option value="二级">等保二级 (L2)</option>
                        <option value="三级">等保三级 (L3)</option>
                     </select>
                     <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 text-white/10" size={18} />

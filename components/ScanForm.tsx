@@ -203,7 +203,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
                   >
                     <div className="flex items-center gap-2.5">
                       <FileEdit size={14} className="text-brand/60" />
-                      <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white/40 italic">测评对象画像</span>
+                      <span className="text-[9px] font-black uppercase tracking-0.2em text-white/40 italic">测评对象画像</span>
                     </div>
                     {showMetadata ? <ChevronUp size={14} className="text-white/20" /> : <ChevronDown size={14} className="text-white/20" />}
                   </button>
@@ -221,7 +221,6 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
                           <label className="text-[8px] font-black uppercase text-white/20 tracking-widest block ml-1">等保等级</label>
                           <select value={draft.securityLevel} onChange={e => handleUpdateDraft('securityLevel', e.target.value)} className="w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-lg text-[9px] font-bold text-brand outline-none appearance-none">
                             <option value="">跟随模板</option>
-                            <option value="二级">等保二级 (L2)</option>
                             <option value="三级">等保三级 (L3)</option>
                           </select>
                         </div>
