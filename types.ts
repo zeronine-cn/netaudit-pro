@@ -16,6 +16,12 @@ export enum Protocol {
   TCP = 'TCP'
 }
 
+// Scan Modes
+export enum ScanMode {
+  QUICK = '快速扫描',
+  DEEP = '深度审计'
+}
+
 export interface DefectDict {
   id: string;
   protocol: Protocol;
@@ -67,7 +73,6 @@ export interface AppConfig {
     usernames: string;
     passwords: string;
   };
-  // 新增 AI 配置，包含 apiKey
   aiConfig: {
     provider: 'gemini' | 'custom';
     baseUrl: string;

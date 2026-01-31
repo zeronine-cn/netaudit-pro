@@ -1,4 +1,5 @@
-import { AppConfig, ScanReport } from '../types';
+
+import { AppConfig, ScanReport, ScanMode } from '../types';
 
 const getApiUrl = (baseUrl: string, endpoint: string): string => {
   let sanitizedBase = baseUrl.replace(/\/$/, "");
@@ -15,11 +16,14 @@ export const performScan = async (
   portRangeStr: string, 
   portConfig: AppConfig['ports'], 
   dicts: AppConfig['dictionaries'],
-  domains: string[]
+  domains: string[],
+  mode: ScanMode,
+  enableBrute: boolean,
+  onProgress: (pct: number, log: string) => void,
+  abortSignal: { cancelled: boolean }
 ): Promise<ScanReport> => {
   
   try {
-    // 1. 发起异步扫描任务
     const startUrl = getApiUrl(apiBaseUrl, '/api/scan');
     const startResponse = await fetch(startUrl, {
       method: 'POST',
@@ -29,7 +33,9 @@ export const performScan = async (
         domains: domains,
         port_range: portRangeStr,
         ports_config: portConfig,
-        dictionaries: dicts
+        dictionaries: dicts,
+        mode: mode,
+        enable_brute: enableBrute
       }),
     });
 
@@ -39,37 +45,45 @@ export const performScan = async (
     }
 
     const { task_id } = await startResponse.json();
-    console.log(`扫描任务已下发，ID: ${task_id}`);
+    onProgress(5, "任务已同步到内核，排队中...");
 
-    // 2. 开始轮询状态
     const statusUrl = getApiUrl(apiBaseUrl, `/api/scan/status/${task_id}`);
     
-    // 最大尝试次数：针对大字典，设为 600 次 (每次 2 秒，共 20 分钟)
-    const MAX_POLLS = 600;
+    const MAX_POLLS = 1200; // 支持更长时间的深度审计
     let polls = 0;
 
     while (polls < MAX_POLLS) {
+      if (abortSignal.cancelled) {
+        onProgress(0, "审计任务已被用户中止。");
+        throw new Error("审计已取消");
+      }
+
       const statusResponse = await fetch(statusUrl);
       if (!statusResponse.ok) throw new Error("查询任务进度时链路异常");
 
       const statusData = await statusResponse.json();
       
       if (statusData.status === 'completed') {
+        onProgress(100, "审计完成，正在同步报告...");
         return statusData.result as ScanReport;
       }
       
       if (statusData.status === 'failed') {
-        throw new Error(statusData.error || "扫描引擎后台执行出错");
+        throw new Error(statusData.error || "扫描引擎异常终止");
       }
 
-      // 继续等待
+      if (statusData.progress) {
+        onProgress(statusData.progress.percent || 10, statusData.progress.log || "正在探测...");
+      }
+
       polls++;
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
-    throw new Error("扫描任务执行时间超过 20 分钟限制，请减小字典规模。");
+    throw new Error("扫描任务执行超时。");
 
   } catch (error: any) {
+    if (error.message === "审计已取消") throw error;
     throw new Error(error.message || "审计服务异常");
   }
 };

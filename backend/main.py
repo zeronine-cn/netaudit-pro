@@ -1,9 +1,10 @@
+
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import uvicorn
 import time
 import os
@@ -13,7 +14,6 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-# 导入扫描模块
 from core.analyzer import SecurityAnalyzer
 from scanners.web_scan import scan_http, check_tls_vulnerability
 from scanners.sys_scan import check_ssh_banner, brute_force_ssh
@@ -22,12 +22,8 @@ from scanners.dns_scan import check_zone_transfer
 app = FastAPI(title="NetAudit 审计引擎")
 analyzer = SecurityAnalyzer()
 
-# 存储任务状态（生产环境建议使用 Redis 或持久化数据库）
-# 格式: { task_id: { "status": "running/completed/failed", "result": None, "logs": [] } }
-task_store = {}
+task_store: Dict[str, Any] = {}
 
-# 路径配置
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
 DATA_DIR = "/app/data" 
 DIST_DIR = "/app/dist" 
 
@@ -49,6 +45,8 @@ class ScanRequest(BaseModel):
     port_range: str
     ports_config: Dict[str, str]
     dictionaries: Dict[str, str]
+    mode: str = "快速扫描"
+    enable_brute: bool = False
 
 def parse_ports(port_str: str) -> List[int]:
     ports = set()
@@ -64,15 +62,16 @@ def parse_ports(port_str: str) -> List[int]:
     return sorted(list(ports))
 
 def run_deep_scan(task_id: str, request: ScanRequest):
-    """
-    核心扫描逻辑，在后台线程中运行，不限时间
-    """
     try:
+        def update_progress(pct, log):
+            task_store[task_id]["progress"] = {"percent": pct, "log": log}
+
         target_ip = request.target
         domain_list = [d.strip() for d in (request.domains or []) if d.strip()]
         ports_to_scan = parse_ports(request.port_range)
         
-        # 1. 快速端口存活探测
+        update_progress(10, "正在执行存活节点探测...")
+
         with ThreadPoolExecutor(max_workers=50) as executor:
             def check(p):
                 s = socket.socket()
@@ -81,33 +80,40 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                     s.close()
                     return p
                 return None
-            results = executor.map(check, ports_to_scan)
+            results = list(executor.map(check, ports_to_scan))
             active_ports = [p for p in results if p]
 
         all_findings = []
         port_status_summary = []
-        user_list = request.dictionaries.get('usernames', 'admin').split('\n')
-        pass_list = request.dictionaries.get('passwords', '123456').split('\n')
         
         ssh_p = parse_ports(request.ports_config.get('ssh', '22'))
         http_p = parse_ports(request.ports_config.get('http', '80'))
         https_p = parse_ports(request.ports_config.get('https', '443'))
         dns_p = parse_ports(request.ports_config.get('dns', '53'))
 
-        for port in active_ports:
+        total_steps = len(active_ports)
+        for idx, port in enumerate(active_ports):
+            progress_base = 20 + int((idx / total_steps) * 60)
+            update_progress(progress_base, f"正在审计端口 {port} ({idx+1}/{total_steps})...")
+            
             is_scanned = False
             
-            # 2. SSH 审计 (最耗时的部分)
             if port in ssh_p:
                 banner = check_ssh_banner(target_ip, port)
-                # 即使字典有1万行，由于在后台运行，也不会超时
-                creds = brute_force_ssh(target_ip, port, user_list, pass_list)
+                creds = []
+                # 只有在深度模式且用户勾选了弱口令审计时执行
+                if request.mode == "深度审计" and request.enable_brute:
+                    user_list = request.dictionaries.get('usernames', 'admin').split('\n')
+                    pass_list = request.dictionaries.get('passwords', '123456').split('\n')
+                    total_combinations = len(user_list) * len(pass_list)
+                    update_progress(progress_base, f"正在执行 SSH 弱口令爆破 (测试 {total_combinations} 组密码)...")
+                    creds = brute_force_ssh(target_ip, port, user_list, pass_list)
+                
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": creds})
                 all_findings.extend(findings)
-                port_status_summary.append({"port": port, "protocol": "SSH", "status": "OPEN", "detail": f"Fingerprint: {banner}"})
+                port_status_summary.append({"port": port, "protocol": "SSH", "status": "OPEN", "detail": f"Banner: {banner}"})
                 is_scanned = True
             
-            # 3. Web 审计
             if port in http_p or port in https_p:
                 scan_targets = domain_list if domain_list else [None]
                 for domain in scan_targets:
@@ -121,7 +127,6 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 port_status_summary.append({"port": port, "protocol": "WEB", "status": "OPEN", "detail": "Web Service Detected"})
                 is_scanned = True
 
-            # 4. DNS 审计
             if port in dns_p:
                 for domain in domain_list:
                     if domain:
@@ -143,6 +148,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 })
                 port_status_summary.append({"port": port, "protocol": "TCP", "status": "OPEN", "detail": "Active"})
 
+        update_progress(95, "正在执行风险建模与评分...")
         score = analyzer.calculate_score(all_findings)
         report = {
             "target": target_ip, "score": score,
@@ -155,7 +161,6 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             }
         }
         
-        # 持久化到 SQLite
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE IF NOT EXISTS scans (id INTEGER PRIMARY KEY, target TEXT, score INTEGER, report TEXT)")
@@ -164,8 +169,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         conn.commit()
         conn.close()
 
-        # 更新任务状态为完成
-        task_store[task_id] = {"status": "completed", "result": report}
+        task_store[task_id] = {"status": "completed", "result": report, "progress": {"percent": 100, "log": "审计完成"}}
         
     except Exception as e:
         print(f"Task {task_id} failed: {str(e)}")
@@ -173,21 +177,13 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
 @app.post("/api/scan")
 async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
-    """
-    启动扫描任务：立即返回 task_id，不等待。
-    """
     task_id = str(uuid.uuid4())
-    task_store[task_id] = {"status": "running", "result": None}
-    
+    task_store[task_id] = {"status": "running", "result": None, "progress": {"percent": 0, "log": "初始化审计引擎"}}
     background_tasks.add_task(run_deep_scan, task_id, request)
-    
     return {"task_id": task_id, "status": "running"}
 
 @app.get("/api/scan/status/{task_id}")
 async def get_scan_status(task_id: str):
-    """
-    前端定期查询扫描状态
-    """
     status = task_store.get(task_id)
     if not status:
         raise HTTPException(status_code=404, detail="Task ID not found")
@@ -229,7 +225,6 @@ async def purge_history():
     conn.close()
     return {"status": "ok"}
 
-# 静态资源处理
 if os.path.exists(DIST_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
     @app.get("/{full_path:path}")
