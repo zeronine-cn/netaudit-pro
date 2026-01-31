@@ -1,17 +1,14 @@
-
 import socket
 import paramiko
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 配置日志记录
+# 配置日志记录，减少 paramiko 的调试输出
 logging.getLogger("paramiko").setLevel(logging.WARNING)
 
 def check_ssh_banner(target: str, port: int):
-    """
-    获取 SSH 指纹，用于初步确认服务类型
-    """
+    """获取 SSH 指纹，用于初步确认服务类型"""
     try:
         with socket.create_connection((target, port), timeout=3) as s:
             s.settimeout(3)
@@ -20,73 +17,62 @@ def check_ssh_banner(target: str, port: int):
     except Exception:
         return "SSH Connection Refused"
 
-def brute_force_ssh(target: str, port: int, usernames: list, passwords: list, on_step_callback=None):
+def brute_force_ssh(target: str, port: int, usernames: list, passwords: list):
     """
-    高性能并发 SSH 弱口令审计函数
-    使用线程池加速验证，并支持实时进度回调
+    优化后的 SSH 弱口令审计函数：
+    1. 引入线程池并发验证，显著提升大字典扫描速度。
+    2. 保留早停机制，一旦发现有效凭据即刻终止所有线程并返回。
     """
-    found_creds = []
-    MAX_WORKERS = 5       # 建议并发数，不宜过高以防被防火墙拦截
-    AUTH_TIMEOUT = 5      # 认证超时
-    BANNER_TIMEOUT = 10   # Banner 响应超时
-
-    # 构建任务队列
-    tasks = []
-    for u in [user.strip() for user in usernames if user.strip()]:
-        for p in [pwd.strip() for pwd in passwords if pwd.strip()]:
-            tasks.append((u, p))
-
-    total_tasks = len(tasks)
-    if total_tasks == 0:
-        return []
-
+    
+    # 内部登录尝试函数
     def attempt_login(user, pwd):
+        user = user.strip()
+        pwd = pwd.strip()
+        if not user or not pwd:
+            return None
+            
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
+            # 关键优化：禁用所有不必要的认证方法以加快速度
             client.connect(
                 hostname=target,
                 port=port,
                 username=user,
                 password=pwd,
-                timeout=AUTH_TIMEOUT,
-                banner_timeout=BANNER_TIMEOUT,
+                timeout=5,          # 认证超时
+                banner_timeout=10,  # 响应超时
                 look_for_keys=False,
                 allow_agent=False
             )
-            # 登录成功
             return {"user": user, "pass": pwd, "is_compromised": True}
         except paramiko.AuthenticationException:
-            return None
+            return None # 账号密码错误
         except Exception:
-            return None
+            return None # 网络层或协议错误
         finally:
             client.close()
 
-    # 使用线程池执行并发验证
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_task = {executor.submit(attempt_login, u, p): (u, p) for u, p in tasks}
+    # 构建任务列表
+    credentials_to_test = [(u, p) for u in usernames for p in passwords]
+    
+    # 使用线程池加速审计 (建议并发数 5-10，避免被目标防火墙拉黑)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # 提交所有任务
+        future_to_cred = {
+            executor.submit(attempt_login, u, p): (u, p) 
+            for u, p in credentials_to_test
+        }
         
-        completed_count = 0
-        for future in as_completed(future_to_task):
-            completed_count += 1
-            result = future.result()
-            
-            # 每一步通过回调反馈进度给主进程
-            if on_step_callback:
-                current_pct = int((completed_count / total_tasks) * 100)
-                user, pwd = future_to_task[future]
-                on_step_callback(current_pct, f"正在验证凭据: {user} / {'*' * len(pwd)}")
+        try:
+            for future in as_completed(future_to_cred):
+                result = future.result()
+                if result:
+                    # 【核心优化：早停机制】
+                    # 发现一个有效凭据后，立即强制取消所有还未开始的任务并关闭线程池
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    return [result]
+        except Exception as e:
+            print(f"审计过程中出现异常: {str(e)}")
 
-            if result:
-                # 核心逻辑：早停机制
-                # 发现一个有效凭据即刻尝试取消后续任务并返回
-                found_creds.append(result)
-                # 停止接收新任务
-                executor.shutdown(wait=False, cancel_futures=True)
-                return found_creds
-            
-            # 短暂休眠以缓解目标系统压力
-            time.sleep(0.1)
-            
-    return found_creds
+    return [] # 未发现弱口令
