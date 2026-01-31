@@ -1,13 +1,14 @@
 
 import React, { useState, useRef } from 'react';
-import { ScanReport } from '../types';
+import { ScanReport, AppConfig } from '../types';
 import { Database, FileJson, Loader2, FileText, Printer, FileCode, ShieldCheck, Download, Zap, ShieldAlert, Cpu, Lock, Terminal, Shield, UserCheck } from 'lucide-react';
 
 interface ReportViewProps {
   report: ScanReport | null;
+  config?: AppConfig;
 }
 
-const ReportView: React.FC<ReportViewProps> = ({ report }) => {
+const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
 
@@ -16,6 +17,31 @@ const ReportView: React.FC<ReportViewProps> = ({ report }) => {
     if (!ip) return '';
     return ip.replace(/。/g, '.').replace(/．/g, '.').trim();
   };
+
+  /**
+   * 核心逻辑：解析最终显示的元数据
+   * 优先级：报告携带的数据 > 全局默认模板 > 硬编码兜底
+   */
+  const getResolvedMeta = () => {
+    if (!report) return { assetName: '未命名资产', securityLevel: '三级', location: '未知', evaluator: '未知' };
+    
+    const rMeta = report.metadata;
+    const dMeta = config?.defaultMetadata || { 
+      assetNamePrefix: 'SVR-', 
+      securityLevel: '三级', 
+      location: '未知机房', 
+      evaluator: '默认审计员' 
+    };
+
+    return {
+      assetName: (rMeta?.assetName && rMeta.assetName.trim() !== '') ? rMeta.assetName : `${dMeta.assetNamePrefix}${report.target}`,
+      securityLevel: (rMeta?.securityLevel && rMeta.securityLevel.trim() !== '') ? rMeta.securityLevel : dMeta.securityLevel,
+      location: (rMeta?.location && rMeta.location.trim() !== '') ? rMeta.location : dMeta.location,
+      evaluator: (rMeta?.evaluator && rMeta.evaluator.trim() !== '') ? rMeta.evaluator : dMeta.evaluator
+    };
+  };
+
+  const meta = getResolvedMeta();
 
   const downloadPdf = () => {
     if (!report || !pdfRef.current) return;
@@ -47,17 +73,15 @@ const ReportView: React.FC<ReportViewProps> = ({ report }) => {
     if (!report) return;
     setIsExporting('MD');
 
-    const m = report.metadata || { assetName: '未命名资产', securityLevel: '三级', location: '未知', evaluator: '未知' };
     const targetIp = formatIP(report.target);
-
     const mdContent = `
 # 网络安全技术审计报告 (NetAudit Pro)
 
 ## 1. 测评对象基本信息
-- **设备名称**: ${m.assetName}
-- **等保等级**: ${m.securityLevel}
-- **物理位置**: ${m.location}
-- **审计负责人**: ${m.evaluator}
+- **设备名称**: ${meta.assetName}
+- **等保等级**: ${meta.securityLevel}
+- **物理位置**: ${meta.location}
+- **审计负责人**: ${meta.evaluator}
 - **目标 IP**: ${targetIp}
 - **审计时间**: ${report.timestamp}
 
@@ -117,8 +141,6 @@ ${report.port_statuses.map(p => `- Port ${p.port} (${p.protocol}): ${p.detail}`)
       </div>
     );
   }
-
-  const meta = report.metadata || { assetName: '未命名资产', securityLevel: '三级', location: '未知', evaluator: '未知' };
 
   return (
     <div className="space-y-12 animate-in fade-in duration-1000 max-w-5xl mx-auto pb-20">

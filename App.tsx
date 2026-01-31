@@ -41,7 +41,6 @@ function App() {
     const savedConfig = localStorage.getItem('netaudit_config');
     if (savedConfig) {
         const parsed = JSON.parse(savedConfig);
-        // 确保新字段存在
         if (!parsed.defaultMetadata) {
             parsed.defaultMetadata = {
                 securityLevel: '三级',
@@ -195,7 +194,7 @@ function App() {
             case 'results': return <ResultsView report={report} config={config} />;
             case 'topology': return <TopologyView report={report} />;
             case 'compliance': return <ComplianceView report={report} />;
-            case 'report': return <ReportView report={report} />;
+            case 'report': return <ReportView report={report} config={config} />;
             case 'settings': return <SettingsView config={config} setConfig={setConfig} />;
             default: return <Dashboard report={report} scanHistory={scanHistory} onSelectReport={handleSelectHistory} />;
           }
