@@ -21,7 +21,7 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
     { id: 'scan', label: '审计任务', icon: Compass },
     { id: 'topology', label: '资产拓扑', icon: Map },
     { id: 'history', label: '档案库', icon: Archive },
-    { id: 'dicts', label: '字典仓库', icon: Library }, // 新增
+    { id: 'dicts', label: '字典仓库', icon: Library },
     { id: 'results', label: '缺陷发现', icon: ShieldAlert },
     { id: 'compliance', label: '等保对齐', icon: ShieldCheck },
     { id: 'report', label: '导出终端', icon: FileText },
@@ -105,7 +105,7 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
               <button
                 key={item.id}
                 onClick={() => setCurrentView(item.id)}
-                className={`p-3 min-w-[76px] flex flex-col items-center gap-1 rounded-xl transition-all relative group ${
+                className={`p-3 min-w-[72px] flex flex-col items-center gap-1 rounded-xl transition-all relative group ${
                   currentView === item.id 
                     ? 'bg-brand/10 text-brand font-black' 
                     : 'text-white/30 hover:text-white hover:bg-white/5'
@@ -114,8 +114,8 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
                 {currentView === item.id && (
                   <div className="absolute inset-0 bg-brand/5 blur-xl rounded-xl animate-pulse"></div>
                 )}
-                <item.icon size={20} strokeWidth={currentView === item.id ? 2.5 : 2} className="relative z-10" />
-                <span className="text-[10px] font-black tracking-tighter relative z-10">
+                <item.icon size={18} strokeWidth={currentView === item.id ? 2.5 : 2} className="relative z-10" />
+                <span className="text-[9px] font-black tracking-tighter relative z-10 whitespace-nowrap">
                   {item.label}
                 </span>
               </button>
@@ -127,8 +127,8 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
               onClick={onLogout}
               className="p-3 flex flex-col items-center gap-1 text-danger/40 hover:text-danger hover:bg-danger/10 rounded-xl transition-all"
             >
-              <LogOut size={20} />
-              <span className="text-[10px] font-black tracking-tighter">注销</span>
+              <LogOut size={18} />
+              <span className="text-[9px] font-black tracking-tighter">注销</span>
             </button>
           </div>
         )}

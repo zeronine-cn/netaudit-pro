@@ -16,7 +16,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
   const [pwdForm, setPwdForm] = useState({ old: '', new: '', confirm: '' });
   const [pwdError, setPwdError] = useState('');
   const [pwdSuccess, setPwdSuccess] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
 
   const handlePortChange = (key: keyof AppConfig['ports'], value: string) => {
     setConfig(prev => ({
@@ -248,7 +247,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
            </div>
         </div>
 
-        {/* AI 专家审计核心 */}
+        {/* AI 专家审计核心 - 移除 API KEY 输入框 */}
         <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-indigo-500 col-span-1 bg-indigo-500/5 relative overflow-hidden bg-black/40 shadow-2xl">
           <div className="absolute top-0 left-0 w-2 h-full bg-indigo-500 opacity-20"></div>
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
@@ -272,7 +271,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             <div className="space-y-4">
               <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">调用模型 (MODEL ID)</label>
               <input 
@@ -295,37 +294,18 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
               />
             </div>
 
-            <div className="space-y-4">
-              <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">API 访问令牌 (API KEY)</label>
-              <div className="relative group">
-                <input 
-                  type={showApiKey ? "text" : "password"}
-                  value={config.aiConfig.apiKey || ''}
-                  onChange={(e) => handleAiConfigChange('apiKey', e.target.value)}
-                  className="w-full px-6 py-5 bg-black/40 border border-white/10 rounded-2xl text-brand font-bold mono focus:border-indigo-500 outline-none transition-all shadow-inner"
-                  placeholder="手动输入审计密钥..."
-                />
-                <button 
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-6 top-1/2 -translate-y-1/2 text-white/20 hover:text-brand transition-colors"
-                >
-                  {showApiKey ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </div>
-            </div>
-
-            <div className="md:col-span-3 p-8 bg-indigo-500/10 rounded-3xl border border-indigo-500/20 backdrop-blur-md">
+            <div className="md:col-span-2 p-8 bg-indigo-500/10 rounded-3xl border border-indigo-500/20 backdrop-blur-md">
                <div className="flex items-center gap-5">
                   <Info className="text-indigo-400 shrink-0" size={24} />
                   <p className="text-[11px] font-bold text-indigo-200/50 uppercase tracking-[0.1em] italic leading-relaxed">
-                    安全说明：API 鉴权已支持手动填写（BYOK 模式）。若此项为空，系统将尝试调用底层安全底座（process.env.API_KEY）自动注入。
+                    安全说明：系统已启用安全底座（process.env.API_KEY）自动注入，无需手动管理 API 访问令牌。
                   </p>
                </div>
             </div>
           </div>
         </div>
 
-        {/* 端口配置 */}
+        {/* 端口配置 - 保留模块优化 */}
         <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info bg-black/40">
           <h3 className="text-3xl font-black italic uppercase mb-10 flex items-center gap-5">
             <Cpu size={36} className="text-info" />

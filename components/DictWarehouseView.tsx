@@ -1,6 +1,5 @@
 
 import React, { useRef } from 'react';
-// Added missing imports for Shield and ChevronRight
 import { Database, Upload, Trash2, Library, Book, Key, User, Save, Info, Zap, Shield, ChevronRight } from 'lucide-react';
 import { AppConfig } from '../types';
 
@@ -12,6 +11,16 @@ interface DictWarehouseViewProps {
 const DictWarehouseView: React.FC<DictWarehouseViewProps> = ({ config, setConfig }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [currentKey, setCurrentKey] = React.useState<keyof AppConfig['dictionaries']>('passwords');
+
+  // 防御性检查：确保 config 和 dictionaries 存在
+  if (!config || !config.dictionaries) {
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <Library size={48} className="text-white/10 animate-pulse" />
+        <p className="text-white/20 font-black uppercase tracking-widest text-xs">引擎仓库未就绪，请检查配置</p>
+      </div>
+    );
+  }
 
   const handleDictChange = (key: keyof AppConfig['dictionaries'], value: string) => {
     setConfig(prev => ({
@@ -48,7 +57,7 @@ const DictWarehouseView: React.FC<DictWarehouseViewProps> = ({ config, setConfig
     { id: 'db_passwords', label: '数据库专有密码', icon: Shield, color: 'text-danger' },
   ];
 
-  const currentDict = config.dictionaries[currentKey];
+  const currentDict = config.dictionaries[currentKey] || '';
   const lineCount = currentDict ? currentDict.split('\n').filter(l => l.trim()).length : 0;
 
   return (
@@ -86,7 +95,7 @@ const DictWarehouseView: React.FC<DictWarehouseViewProps> = ({ config, setConfig
                   {cat.label}
                 </div>
                 <div className="text-[9px] font-bold text-white/20 uppercase tracking-widest mt-1">
-                  特征总量: {config.dictionaries[cat.id as keyof AppConfig['dictionaries']].split('\n').filter(l => l.trim()).length}
+                  特征总量: {(config.dictionaries[cat.id as keyof AppConfig['dictionaries']] || '').split('\n').filter(l => l.trim()).length}
                 </div>
               </div>
               <ChevronRight size={16} className={currentKey === cat.id ? 'text-brand' : 'text-white/10'} />
@@ -99,7 +108,7 @@ const DictWarehouseView: React.FC<DictWarehouseViewProps> = ({ config, setConfig
                 <span className="text-xs font-black uppercase tracking-widest italic">等保三级基线</span>
              </div>
              <p className="text-[10px] text-white/40 leading-relaxed font-bold italic">
-               等保 2.0 合规要求应对登录用户进行身份标识 and 鉴别。审计字典应包含：不低于 10 种常见的默认账号、常用口令及对应的弱口令特征。
+               等保 2.0 合规要求应对登录用户进行身份标识与鉴别。审计字典应包含：不低于 10 种常见的默认账号、常用口令及对应的弱口令特征。
              </p>
           </div>
         </div>

@@ -39,11 +39,8 @@ function App() {
   });
   
   const [config, setConfig] = useState<AppConfig>(() => {
-    const savedConfig = localStorage.getItem('netaudit_config');
-    if (savedConfig) {
-        return JSON.parse(savedConfig);
-    }
-    return {
+    // 定义完整的默认配置，包含所有8个端口
+    const defaultConfig: AppConfig = {
       apiBaseUrl: window.location.origin,
       adminPassword: 'admin888',
       ports: { 
@@ -59,7 +56,6 @@ function App() {
       aiConfig: {
         provider: 'gemini',
         baseUrl: 'https://api.google.com',
-        apiKey: '',
         model: 'gemini-3-pro-preview'
       },
       defaultMetadata: {
@@ -69,6 +65,26 @@ function App() {
         assetNamePrefix: 'SVR-'
       }
     };
+
+    const savedConfig = localStorage.getItem('netaudit_config');
+    if (savedConfig) {
+        try {
+            const parsed = JSON.parse(savedConfig);
+            // 关键修复：深度合并逻辑
+            // 即使缓存中缺少 mysql/redis 等字段，也会从 defaultConfig 中补全
+            return {
+                ...defaultConfig,
+                ...parsed,
+                ports: { ...defaultConfig.ports, ...(parsed.ports || {}) },
+                dictionaries: { ...defaultConfig.dictionaries, ...(parsed.dictionaries || {}) },
+                aiConfig: { ...defaultConfig.aiConfig, ...(parsed.aiConfig || {}) },
+                defaultMetadata: { ...defaultConfig.defaultMetadata, ...(parsed.defaultMetadata || {}) }
+            };
+        } catch (e) {
+            return defaultConfig;
+        }
+    }
+    return defaultConfig;
   });
 
   useEffect(() => {
