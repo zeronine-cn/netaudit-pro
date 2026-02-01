@@ -9,8 +9,6 @@ interface SettingsViewProps {
 }
 
 const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
-  const userFileRef = useRef<HTMLInputElement>(null);
-  const passFileRef = useRef<HTMLInputElement>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{status: 'idle' | 'success' | 'error', msg: string}>({status: 'idle', msg: ''});
 
@@ -27,13 +25,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
     }));
   };
 
-  const handleDictChange = (key: keyof AppConfig['dictionaries'], value: string) => {
-    setConfig(prev => ({
-      ...prev,
-      dictionaries: { ...prev.dictionaries, [key]: value }
-    }));
-  };
-
   const handleAiConfigChange = (key: keyof AppConfig['aiConfig'], value: any) => {
     setConfig(prev => ({
       ...prev,
@@ -46,25 +37,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
       ...prev,
       defaultMetadata: { ...prev.defaultMetadata, [key]: value }
     }));
-  };
-
-  const loadPreset = (loadType: 'usernames' | 'passwords') => {
-    const presets = {
-      usernames: 'root\nadmin\nuser\nubuntu\ndebian\ntest\nsupport\noperator\nmanager\nwebmaster',
-      passwords: '123456\npassword\n12345678\nadmin\n12345\n123456789\n1234\nqwerty\npassword123\nadmin123'
-    };
-    handleDictChange(loadType, presets[loadType]);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, fileKey: keyof AppConfig['dictionaries']) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      handleDictChange(fileKey, content);
-    };
-    reader.readAsText(file);
   };
 
   const testConnection = async () => {
@@ -113,7 +85,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
       <div className="flex justify-between items-end border-b border-white/10 pb-6">
         <div>
           <h2 className="text-5xl font-black uppercase italic tracking-tighter glow-text">审计引擎核心</h2>
-          <p className="font-bold text-brand mt-2 uppercase tracking-widest text-sm">全局扫描与字典参数配置</p>
+          <p className="font-bold text-brand mt-2 uppercase tracking-widest text-sm">全局扫描与参数配置</p>
         </div>
         <button 
             onClick={() => {
@@ -130,7 +102,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
 
       <div className="grid grid-cols-1 gap-10">
         
-        {/* 测评资产模板 (新功能) */}
+        {/* 测评资产模板 */}
         <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info relative overflow-hidden bg-black/40 shadow-xl">
            <div className="absolute top-0 left-0 w-2 h-full bg-info opacity-20"></div>
            <div className="flex items-center gap-6 mb-10">
@@ -353,56 +325,24 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
           </div>
         </div>
 
-        {/* 端口和字典 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-          <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info bg-black/40">
-            <h3 className="text-3xl font-black italic uppercase mb-10 flex items-center gap-5">
-              <Cpu size={36} className="text-info" />
-              资产端口拓扑
-            </h3>
-            <div className="space-y-8">
-              {Object.entries(config.ports).map(([portType, portVal]) => (
-                  <div key={portType} className="space-y-4">
-                    <label className="block text-[11px] font-bold uppercase tracking-[0.4em] text-white/20 ml-1">{portType.toUpperCase()} 协议端口标识</label>
-                    <input 
-                      type="text" 
-                      value={portVal}
-                      onChange={(e) => handlePortChange(portType as keyof AppConfig['ports'], e.target.value)}
-                      className="w-full px-8 py-5 bg-white/5 border border-white/10 rounded-2xl text-white font-bold mono focus:border-info outline-none transition-all"
-                    />
-                  </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-brand bg-black/40">
-            <h3 className="text-3xl font-black italic uppercase mb-10 flex items-center gap-5">
-              <Database size={36} className="text-brand" />
-              认证字典仓库
-            </h3>
-            <div className="space-y-12">
-              {[
-                { dictKey: 'usernames', dictLabel: '管理员用户名', dictRef: userFileRef },
-                { dictKey: 'passwords', dictLabel: '安全策略密码', dictRef: passFileRef }
-              ].map((dictItem) => (
-                  <div key={dictItem.dictKey} className="space-y-5">
-                    <div className="flex justify-between items-center px-1">
-                      <label className="block text-[11px] font-bold uppercase tracking-[0.3em] text-white/20">{dictItem.dictLabel} 集合库</label>
-                      <div className="flex gap-3">
-                        <button onClick={() => loadPreset(dictItem.dictKey as any)} className="px-4 py-2 bg-white/10 rounded-xl text-[10px] font-black text-white/60 uppercase hover:bg-white/20 transition-all">预设 TOP 10</button>
-                        <button onClick={() => dictItem.dictRef.current?.click()} className="px-4 py-2 bg-brand/10 rounded-xl text-[10px] font-black text-brand uppercase hover:bg-brand hover:text-black transition-all">上传 TXT</button>
-                      </div>
-                      <input type="file" ref={dictItem.dictRef} className="hidden" accept=".txt" onChange={(e) => handleFileUpload(e, dictItem.dictKey as any)} />
-                    </div>
-                    <textarea 
-                      rows={6}
-                      value={config.dictionaries[dictItem.dictKey as keyof AppConfig['dictionaries']]}
-                      onChange={(e) => handleDictChange(dictItem.dictKey as keyof AppConfig['dictionaries'], e.target.value)}
-                      className="w-full p-8 bg-black/20 border border-white/5 rounded-[2.5rem] text-white/80 font-mono text-xs h-[180px] focus:border-brand outline-none transition-all resize-none shadow-inner custom-scrollbar"
-                    />
-                  </div>
-              ))}
-            </div>
+        {/* 端口配置 */}
+        <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-info bg-black/40">
+          <h3 className="text-3xl font-black italic uppercase mb-10 flex items-center gap-5">
+            <Cpu size={36} className="text-info" />
+            资产端口拓扑
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-10 gap-y-8">
+            {Object.entries(config.ports).map(([portType, portVal]) => (
+                <div key={portType} className="space-y-4">
+                  <label className="block text-[11px] font-bold uppercase tracking-[0.4em] text-white/20 ml-1">{portType.toUpperCase()} 协议端口标识</label>
+                  <input 
+                    type="text" 
+                    value={portVal}
+                    onChange={(e) => handlePortChange(portType as keyof AppConfig['ports'], e.target.value)}
+                    className="w-full px-8 py-5 bg-white/5 border border-white/10 rounded-2xl text-white font-bold mono focus:border-info outline-none transition-all"
+                  />
+                </div>
+            ))}
           </div>
         </div>
       </div>
@@ -413,7 +353,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
          </div>
          <div className="flex-1 text-center md:text-left">
             <div className="text-4xl font-black uppercase italic leading-none mb-4 glow-text text-brand">全域配置已实时持久化</div>
-            <p className="font-bold text-white/40 uppercase tracking-tight italic text-sm">资产拓扑、准入凭据以及 AI 审计引擎参数已安全归档至本地节点，下一次审计会话将自动应用生效。</p>
+            <p className="font-bold text-white/40 uppercase tracking-tight italic text-sm">资产拓扑、准入凭据以及 AI 审计引擎参数已安全归档至本地节点，下一次审计会话将自动应用生效。字典配置请前往专门的 [字典仓库] 进行维护。</p>
          </div>
       </div>
     </div>

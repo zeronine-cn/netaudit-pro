@@ -13,7 +13,11 @@ export enum Protocol {
   SSH = 'SSH',
   DNS = 'DNS',
   HTTP = 'HTTP',
-  TCP = 'TCP'
+  TCP = 'TCP',
+  MYSQL = 'MySQL',
+  REDIS = 'Redis',
+  POSTGRES = 'PostgreSQL',
+  MONGODB = 'MongoDB'
 }
 
 // Scan Modes
@@ -35,6 +39,7 @@ export interface DefectDict {
     success_user?: string;
     success_pass?: string;
     is_compromised?: boolean;
+    db_type?: string;
   };
 }
 
@@ -74,10 +79,17 @@ export interface AppConfig {
     http: string;
     https: string;
     dns: string;
+    mysql: string;
+    redis: string;
+    postgres: string;
+    mongodb: string;
   };
+  // 细化后的字典仓库
   dictionaries: {
     usernames: string;
     passwords: string;
+    db_usernames: string;
+    db_passwords: string;
   };
   aiConfig: {
     provider: 'gemini' | 'custom';
@@ -85,7 +97,6 @@ export interface AppConfig {
     apiKey?: string;
     model: string;
   };
-  // 新增：全局测评资产模板
   defaultMetadata: {
     securityLevel: string;
     location: string;

@@ -8,6 +8,7 @@ import SettingsView from './components/SettingsView';
 import ComplianceView from './components/ComplianceView';
 import ReportView from './components/ReportView';
 import HistoryView from './components/HistoryView';
+import DictWarehouseView from './components/DictWarehouseView';
 import Login from './components/Login';
 import TopologyView from './components/TopologyView';
 import { ScanReport, AppConfig } from './types';
@@ -30,32 +31,31 @@ function App() {
   const [scanDraft, setScanDraft] = useState({
     target: '127.0.0.1',
     domainStr: '', 
-    portRange: '22, 80, 443, 3306',
+    portRange: '22, 80, 443, 3306, 6379, 5432, 27017',
     assetName: '',
-    securityLevel: '', // 留空则使用默认配置
-    location: '',      // 留空则使用默认配置
-    evaluator: ''       // 留空则使用默认配置
+    securityLevel: '', 
+    location: '',      
+    evaluator: ''       
   });
   
   const [config, setConfig] = useState<AppConfig>(() => {
     const savedConfig = localStorage.getItem('netaudit_config');
     if (savedConfig) {
-        const parsed = JSON.parse(savedConfig);
-        if (!parsed.defaultMetadata) {
-            parsed.defaultMetadata = {
-                securityLevel: '三级',
-                location: '默认机房',
-                evaluator: 'Admin',
-                assetNamePrefix: 'ASSET-'
-            };
-        }
-        return parsed;
+        return JSON.parse(savedConfig);
     }
     return {
       apiBaseUrl: window.location.origin,
       adminPassword: 'admin888',
-      ports: { ssh: '22', http: '80, 8080', https: '443, 8443', dns: '53' },
-      dictionaries: { usernames: 'root\nadmin', passwords: 'password\n123456' },
+      ports: { 
+        ssh: '22', http: '80, 8080', https: '443, 8443', dns: '53',
+        mysql: '3306', redis: '6379', postgres: '5432', mongodb: '27017'
+      },
+      dictionaries: { 
+        usernames: 'root\nadmin', 
+        passwords: 'password\n123456',
+        db_usernames: 'root\nadmin\npostgres\nsa',
+        db_passwords: 'root\nadmin\npassword\n123456'
+      },
       aiConfig: {
         provider: 'gemini',
         baseUrl: 'https://api.google.com',
@@ -99,9 +99,7 @@ function App() {
   }, [isAuthenticated, config.apiBaseUrl]);
 
   const handleLogin = (success: boolean) => {
-    if (success) {
-      setIsAuthenticated(true);
-    }
+    if (success) setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
@@ -171,26 +169,19 @@ function App() {
         {(() => {
           switch (currentView) {
             case 'dashboard': return <Dashboard report={report} scanHistory={scanHistory} onSelectReport={handleSelectHistory} />;
-            case 'scan': return (
-              <ScanForm 
-                onScanComplete={handleScanComplete} 
-                config={config} 
-                draft={scanDraft}
-                setDraft={setScanDraft}
-                logs={scanLogs}
-                setLogs={setScanLogs}
-              />
-            );
-            case 'history': return (
-              <HistoryView 
-                history={scanHistory} 
-                onSelect={handleSelectHistory} 
-                onDelete={handleDeleteHistory} 
-                onImport={handleImportHistory} 
-                onRefresh={fetchHistory}
-                apiBaseUrl={config.apiBaseUrl} 
-              />
-            );
+            case 'scan': 
+              return (
+                <ScanForm 
+                  onScanComplete={handleScanComplete} 
+                  config={config} 
+                  draft={scanDraft}
+                  setDraft={setScanDraft}
+                  logs={scanLogs}
+                  setLogs={setScanLogs}
+                />
+              );
+            case 'history': return <HistoryView history={scanHistory} onSelect={handleSelectHistory} onDelete={handleDeleteHistory} onImport={handleImportHistory} onRefresh={fetchHistory} apiBaseUrl={config.apiBaseUrl} />;
+            case 'dicts': return <DictWarehouseView config={config} setConfig={setConfig} />;
             case 'results': return <ResultsView report={report} config={config} />;
             case 'topology': return <TopologyView report={report} />;
             case 'compliance': return <ComplianceView report={report} />;

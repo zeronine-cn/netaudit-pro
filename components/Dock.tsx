@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { LayoutDashboard, Compass, ShieldAlert, ShieldCheck, FileText, Settings, LogOut, Terminal, GripVertical, ChevronLeft, Map, Archive } from 'lucide-react';
+import { LayoutDashboard, Compass, ShieldAlert, ShieldCheck, FileText, Settings, LogOut, Terminal, GripVertical, ChevronLeft, Map, Archive, Library } from 'lucide-react';
 
 interface DockProps {
   currentView: string;
@@ -21,6 +21,7 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
     { id: 'scan', label: '审计任务', icon: Compass },
     { id: 'topology', label: '资产拓扑', icon: Map },
     { id: 'history', label: '档案库', icon: Archive },
+    { id: 'dicts', label: '字典仓库', icon: Library }, // 新增
     { id: 'results', label: '缺陷发现', icon: ShieldAlert },
     { id: 'compliance', label: '等保对齐', icon: ShieldCheck },
     { id: 'report', label: '导出终端', icon: FileText },
