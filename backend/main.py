@@ -8,7 +8,7 @@ import time
 import socket
 import json
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 引入核心分析器
 from core.analyzer import SecurityAnalyzer
@@ -54,13 +54,28 @@ def parse_port_config(config_str: str) -> List[int]:
             ports.append(int(p))
     return ports
 
+def probe_port(ip: str, port: int) -> bool:
+    """简单的 TCP 端口存活探测"""
+    try:
+        with socket.create_connection((ip, port), timeout=0.5) as s:
+            return True
+    except:
+        return False
+
 def run_deep_scan(task_id: str, request: ScanRequest):
     try:
         def update_progress(pct, log):
             task_store[task_id]["progress"] = {"percent": pct, "log": log}
 
+        # --- 修改点 1: 域名预解析，固定 IP ---
         target_ip = request.target
-        
+        try:
+            # 简单的判断，如果包含字母则尝试解析
+            if any(c.isalpha() for c in target_ip): 
+                target_ip = socket.gethostbyname(request.target)
+        except Exception as e:
+            print(f"DNS解析失败，尝试直接使用目标: {e}")
+
         # 1. 动态解析目标端口 (这是实际要扫描的端口列表)
         target_ports = parse_port_config(request.port_range)
         
@@ -81,27 +96,45 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         all_findings = []
         port_status_summary = []
         
-        total_ports = len(target_ports)
-        if total_ports == 0:
+        if len(target_ports) == 0:
             raise Exception("未指定扫描端口范围")
 
-        for idx, port in enumerate(target_ports):
-            progress_pct = int((idx / total_ports) * 90)
+        # --- 修改点 2: 并发端口探测 (替换原有的 Step A) ---
+        update_progress(5, f"正在对 {len(target_ports)} 个端口进行并发存活探测...")
+        
+        active_ports = []
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            # 提交所有探测任务
+            future_to_port = {executor.submit(probe_port, target_ip, p): p for p in target_ports}
+            for future in as_completed(future_to_port):
+                p = future_to_port[future]
+                if future.result():
+                    active_ports.append(p)
+        
+        active_ports.sort() # 排序，方便查看报告
+        
+        if not active_ports:
+            # 如果没有端口开放，直接结束
+            task_store[task_id] = {
+                "status": "completed", 
+                "result": {
+                    "target": target_ip, "score": 100, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "defects": [], "port_statuses": [], "metadata": request.metadata, "summary": {"high": 0, "medium": 0, "low": 0}
+                }, 
+                "progress": {"percent": 100, "log": "未发现开放端口"}
+            }
+            return
+
+        # --- 修改点 3: 针对存活端口进行深度扫描 (Step B) ---
+        total_active = len(active_ports)
+        update_progress(15, f"发现 {total_active} 个存活端口，开始深度审计...")
+
+        for idx, port in enumerate(active_ports):
+            # 进度条计算：从 20% 开始，到 90% 结束
+            progress_pct = 20 + int((idx / total_active) * 70)
             update_progress(progress_pct, f"正在深度审计端口 {port}...")
             
-            # --- 步骤 A: 端口存活探测 (Socket Connect) ---
-            is_open = False
-            try:
-                # 设置较短超时，快速跳过关闭端口
-                with socket.create_connection((target_ip, port), timeout=0.5) as s:
-                    is_open = True
-            except:
-                pass
-
-            if not is_open:
-                continue
-
-            # --- 步骤 B: 服务识别与深度扫描 ---
+            # 由于已经是 active_ports，无需再次 socket 探测存活，直接进行服务识别
             current_protocol = "TCP"
             service_detail = "Unknown Service"
             
