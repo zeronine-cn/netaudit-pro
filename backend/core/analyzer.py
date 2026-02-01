@@ -178,6 +178,32 @@ class SecurityAnalyzer:
                     "mlps_clause": "G3-安全区域边界-访问控制"
                 })
 
+        # --- 新增逻辑：高危/非必要端口判定 ---
+        # 定义高危/不建议开放的端口列表
+        RISKY_PORTS = {
+            21: {"name": "FTP", "desc": "明文传输协议，建议使用 SFTP", "risk": "中危"},
+            23: {"name": "Telnet", "desc": "明文传输协议，完全不安全，建议使用 SSH", "risk": "高危"},
+            135: {"name": "RPC", "desc": "易受攻击，严禁对公网开放", "risk": "高危"},
+            139: {"name": "NetBIOS", "desc": "易泄露内网信息，严禁对公网开放", "risk": "高危"},
+            445: {"name": "SMB", "desc": "存在永恒之蓝等高危漏洞，严禁对公网开放", "risk": "高危"},
+            3389: {"name": "RDP", "desc": "远程桌面服务，易受勒索病毒攻击，建议仅对 VPN 开放", "risk": "高危"},
+            5900: {"name": "VNC", "desc": "远程控制服务，建议设置强密码或限制访问 IP", "risk": "中危"},
+            11211: {"name": "Memcached", "desc": "可能存在未授权访问漏洞", "risk": "中危"},
+            27017: {"name": "MongoDB", "desc": "NoSQL 数据库，默认配置可能存在未授权访问", "risk": "中危"}
+        }
+
+        if port in RISKY_PORTS:
+            info = RISKY_PORTS[port]
+            findings.append({
+                "id": f"RISKY-PORT-{port}", 
+                "protocol": "TCP",
+                "check_item": "高危/非必要端口开放", 
+                "risk_level": info["risk"],
+                "description": f"检测到高危端口 {port} ({info['name']}) 处于开放状态。",
+                "detail_value": f"Port {port} ({info['name']}) is OPEN. {info['desc']}",
+                "suggestion": f"该端口属于高风险服务，请立即关闭或通过防火墙限制仅允许特定 IP 访问。",
+                "mlps_clause": "G3-安全区域边界-访问控制" 
+            })
 
         # 6. 兜底
         if not findings:
