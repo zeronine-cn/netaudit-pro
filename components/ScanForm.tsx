@@ -29,6 +29,9 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef({ cancelled: false });
   const hideTimeoutRef = useRef<number | null>(null);
+  
+  // 用于记录上一条日志，防止轮询重复
+  const lastLogRef = useRef<string>("");
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -85,6 +88,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     setProgress(0);
     setCurrentAction("正在校准审计引擎...");
     abortRef.current.cancelled = false;
+    lastLogRef.current = ""; // 重置日志去重记录
 
     const domains = draft.domainStr.split(',').map(d => d.trim()).filter(d => d);
     
@@ -114,8 +118,11 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         (pct, log) => {
           setProgress(pct);
           setCurrentAction(log);
-          if (pct > 0 && pct % 20 === 0 && pct < 100) {
-            addLog(`[CORE] 审计进度已同步: ${pct}% - ${log}`, 'info');
+          
+          // 优化逻辑：只要日志内容变化且非空，就记录一条新日志
+          if (log && log !== lastLogRef.current) {
+             addLog(`[${pct}%] ${log}`, 'info');
+             lastLogRef.current = log;
           }
         },
         abortRef.current,

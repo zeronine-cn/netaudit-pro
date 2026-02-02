@@ -68,13 +68,16 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             task_store[task_id]["progress"] = {"percent": pct, "log": log}
 
         # --- 修改点 1: 域名预解析，固定 IP ---
+        update_progress(1, f"正在解析目标地址: {request.target}")
         target_ip = request.target
         try:
             # 简单的判断，如果包含字母则尝试解析
             if any(c.isalpha() for c in target_ip): 
                 target_ip = socket.gethostbyname(request.target)
+                update_progress(2, f"DNS 解析成功: {request.target} -> {target_ip}")
         except Exception as e:
             print(f"DNS解析失败，尝试直接使用目标: {e}")
+            update_progress(2, f"DNS 解析异常，使用原始目标: {target_ip}")
 
         # 1. 动态解析目标端口 (这是实际要扫描的端口列表)
         target_ports = parse_port_config(request.port_range)
@@ -100,7 +103,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             raise Exception("未指定扫描端口范围")
 
         # --- 修改点 2: 并发端口探测 (替换原有的 Step A) ---
-        update_progress(5, f"正在对 {len(target_ports)} 个端口进行并发存活探测...")
+        update_progress(5, f"启动并发连接探测 (Target: {target_ip}, Ports: {len(target_ports)})")
         
         active_ports = []
         with ThreadPoolExecutor(max_workers=50) as executor:
@@ -114,6 +117,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         active_ports.sort() # 排序，方便查看报告
         
         if not active_ports:
+            update_progress(100, "未发现任何开放端口，审计结束。")
             # 如果没有端口开放，直接结束
             task_store[task_id] = {
                 "status": "completed", 
@@ -127,12 +131,12 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
         # --- 修改点 3: 针对存活端口进行深度扫描 (Step B) ---
         total_active = len(active_ports)
-        update_progress(15, f"发现 {total_active} 个存活端口，开始深度审计...")
+        update_progress(15, f"存活端口探测完毕，发现 {total_active} 个开放端口: {active_ports}")
+        time.sleep(0.5) # 让用户看清日志
 
         for idx, port in enumerate(active_ports):
             # 进度条计算：从 20% 开始，到 90% 结束
             progress_pct = 20 + int((idx / total_active) * 70)
-            update_progress(progress_pct, f"正在深度审计端口 {port}...")
             
             # 由于已经是 active_ports，无需再次 socket 探测存活，直接进行服务识别
             current_protocol = "TCP"
@@ -141,6 +145,8 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 1. SSH 服务审计
             if port in ssh_ports:
                 current_protocol = "SSH"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (SSH) - 获取 Banner...")
+                
                 # 始终获取 Banner
                 banner = check_ssh_banner(target_ip, port)
                 service_detail = banner
@@ -148,10 +154,12 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 weak_creds = []
                 # 【关键逻辑】仅在 "深度审计" 模式下且开启爆破时，才执行耗时的 SSH 爆破
                 if request.mode == "深度审计" and request.enable_brute and users and passwords:
-                    update_progress(progress_pct, f"正在对端口 {port} 进行 SSH 弱口令爆破 (深度模式)...")
+                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} (SSH) - 启动弱口令爆破 (深度模式)...")
                     weak_creds = brute_force_ssh(target_ip, port, users, passwords)
+                    if weak_creds:
+                        update_progress(progress_pct, f"[{idx+1}/{total_active}] 警告: 端口 {port} 发现有效弱口令!")
                 elif request.enable_brute:
-                    update_progress(progress_pct, f"端口 {port} 检测到 SSH，但当前非深度模式，跳过爆破。")
+                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} (SSH) - 跳过爆破 (当前非深度模式)")
                 
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
                 all_findings.extend(findings)
@@ -160,6 +168,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             elif port in http_ports or port in https_ports:
                 protocol_name = "HTTPS" if port in https_ports else "HTTP"
                 current_protocol = protocol_name
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} ({protocol_name}) - Web 指纹识别...")
                 
                 # 确定 VHost
                 primary_vhost = request.domains[0] if request.domains else None
@@ -171,7 +180,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 # VHost 碰撞 (仅深度模式或指定域名时)
                 verified_vhosts = []
                 if request.mode == "深度审计" and request.domains:
-                    update_progress(progress_pct, f"正在对端口 {port} 进行 VHost 碰撞...")
+                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} - 正在进行 VHost 碰撞探测...")
                     for domain in request.domains:
                         if verify_vhost(target_ip, port, domain):
                             verified_vhosts.append(domain)
@@ -179,6 +188,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 # TLS 检测 (仅 HTTPS)
                 tls_res = {}
                 if protocol_name == "HTTPS":
+                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} - 正在检测 SSL/TLS 配置安全性...")
                     tls_res = check_tls_vulnerability(target_ip, port, vhost=primary_vhost)
                 
                 findings = analyzer.analyze_service(protocol_name, port, service_detail, {
@@ -192,6 +202,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             elif port in dns_ports:
                 current_protocol = "DNS"
                 service_detail = "DNS Server"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (DNS) - 检查区域传送漏洞...")
                 
                 dns_res = {}
                 if request.domains:
@@ -213,6 +224,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 4. MySQL 审计
             elif port in mysql_ports:
                 current_protocol = "MySQL"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (MySQL) - 协议握手探测...")
                 # 调用 scanners/db_scan.py
                 res = scan_mysql(target_ip, port)
                 service_detail = res.get("banner", "MySQL Service")
@@ -222,6 +234,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 5. Redis 审计
             elif port in redis_ports:
                 current_protocol = "Redis"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (Redis) - 检测未授权访问...")
                 # 调用 scanners/db_scan.py
                 res = scan_redis(target_ip, port)
                 service_detail = res.get("detail", "Redis Service")
@@ -231,6 +244,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 6. PostgreSQL 审计
             elif port in postgres_ports:
                 current_protocol = "PostgreSQL"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (PostgreSQL)...")
                 # 调用 scanners/db_scan.py
                 res = scan_postgres(target_ip, port)
                 service_detail = res.get("banner", "PostgreSQL")
@@ -240,6 +254,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 7. MongoDB 审计
             elif port in mongo_ports:
                 current_protocol = "MongoDB"
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (MongoDB)...")
                 # 调用 scanners/db_scan.py
                 res = scan_mongodb(target_ip, port)
                 service_detail = res.get("banner", "MongoDB")
@@ -248,6 +263,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
             # 8. 通用 TCP 兜底
             else:
+                update_progress(progress_pct, f"[{idx+1}/{total_active}] 记录开放端口 {port} (Generic TCP)...")
                 findings = analyzer.analyze_service("TCP", port, "Generic TCP", {})
                 all_findings.extend(findings)
 
@@ -258,6 +274,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 "detail": service_detail
             })
 
+        update_progress(95, "所有端口审计完成，正在生成合规报告...")
         # 计算总分
         score = analyzer.calculate_score(all_findings)
         
