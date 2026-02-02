@@ -8,22 +8,7 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from concurrent.futures import ThreadPoolExecutor
 
-# 离线探测常用的敏感路径集
-SENSITIVE_PATHS = [
-    "/.git/config",
-    "/.env",
-    "/phpinfo.php",
-    "/info.php",
-    "/.vscode/sftp.json",
-    "/admin/",
-    "/backup/",
-    "/config.php.bak",
-    "/.htaccess",
-    "/robots.txt",
-    "/server-status"
-]
-
-# 关键安全响应头检查列表
+# Security Headers to check
 SECURITY_HEADERS = [
     "Content-Security-Policy",
     "X-Frame-Options",
@@ -32,92 +17,20 @@ SECURITY_HEADERS = [
     "Referrer-Policy"
 ]
 
-def verify_vhost(target: str, port: int, vhost: str):
-    """
-    验证域名是否真的是该 IP 承载的有效虚拟主机
-    """
-    try:
-        # 尝试创建一个极低安全级别的 context，以防服务端使用弱密钥
-        try:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            context.set_ciphers('DEFAULT:@SECLEVEL=0')
-        except:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        
-        with socket.create_connection((target, port), timeout=3) as sock:
-            with context.wrap_socket(sock, server_hostname=vhost) as ssock:
-                cert_bin = ssock.getpeercert(True)
-                cert = x509.load_der_x509_certificate(cert_bin, default_backend())
-                
-                try:
-                    ext = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
-                    sans = ext.value.get_values_for_type(x509.GeneralName)
-                    for san in sans:
-                        pattern = san.replace('.', r'\.').replace('*', r'.*')
-                        if re.fullmatch(pattern, vhost, re.IGNORECASE):
-                            return True
-                except:
-                    cn = str(cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0].value)
-                    if cn.lower() == vhost.lower():
-                        return True
-        return False
-    except:
-        try:
-            r = requests.get(f"http://{target}:{port}", headers={"Host": vhost}, timeout=2, allow_redirects=False)
-            return r.status_code not in [404, 421]
-        except:
-            return False
-
-def probe_sensitive_paths(base_url, headers):
-    """
-    并发探测敏感目录
-    """
-    exposed = []
-    
-    def check_path(path):
-        try:
-            full_url = f"{base_url.rstrip('/')}{path}"
-            # 仅做 HEAD 请求以减少流量，或者做 GET 但只读少量内容
-            r = requests.get(full_url, headers=headers, timeout=2, allow_redirects=False, verify=False)
-            # 排除 404, 403, 5xx，通常 200 或 3xx 可能代表存在
-            if r.status_code == 200:
-                # 二次校验：如果内容包含 404 文本（伪 404），则跳过
-                if "404" not in r.text[:200].lower():
-                    return {"path": path, "status": r.status_code}
-            return None
-        except:
-            return None
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(check_path, SENSITIVE_PATHS))
-        exposed = [r for r in results if r]
-    
-    return exposed
-
 def scan_http(target: str, port: int, vhost: str = None):
     try:
-        protocol = "https" if port == 443 or port == 8443 else "http"
+        # Determine protocol based on common playground ports
+        protocol = "https" if port in [443, 8443] else "http"
         url = f"{protocol}://{target}:{port}"
         
-        headers = {'User-Agent': 'NetAudit-Audit-Bot/3.1'}
+        headers = {'User-Agent': 'NetAudit-Audit-Bot/3.2'}
         if vhost: headers['Host'] = vhost
             
-        # requests 默认会验证 SSL，这里 verify=False 忽略证书错误以便获取 Banner
-        response = requests.get(url, headers=headers, timeout=4, allow_redirects=False, verify=False)
+        # verify=False is critical to ignore cert errors and get the banner
+        response = requests.get(url, headers=headers, timeout=5, allow_redirects=False, verify=False)
         server_banner = response.headers.get('Server', 'Unknown')
         
-        # 深度探测：敏感目录扫描
-        exposed_paths = probe_sensitive_paths(url, headers)
-        
-        # 深度探测：安全头分析
-        missing_headers = []
-        for sh in SECURITY_HEADERS:
-            if sh not in response.headers:
-                missing_headers.append(sh)
+        missing_headers = [sh for sh in SECURITY_HEADERS if sh not in response.headers]
 
         return {
             "port": port,
@@ -126,12 +39,10 @@ def scan_http(target: str, port: int, vhost: str = None):
             "headers": dict(response.headers),
             "vhost_matched": vhost if vhost else target,
             "deep_scan": {
-                "exposed_paths": exposed_paths,
                 "missing_headers": missing_headers
             }
         }
     except Exception as e:
-        # 即使报错，如果能拿到 error message 也返回
         return {"port": port, "status": "CLOSED", "error": str(e)}
 
 def check_tls_vulnerability(target: str, port: int, vhost: str = None):
@@ -142,52 +53,50 @@ def check_tls_vulnerability(target: str, port: int, vhost: str = None):
         "vulnerabilities": []
     }
     
-    # 1. 检测老旧协议 (TLS 1.0 / 1.1)
-    # 关键：必须设置 SECLEVEL=0，否则 OpenSSL 可能会在客户端直接拒绝连接，导致无法检测
-    for version_name, version_const in [("TLSv1.0", ssl.PROTOCOL_TLSv1), ("TLSv1.1", ssl.PROTOCOL_TLSv1_1)]:
+    # Define probes for old protocols
+    # Note: Modern systems may not have these constants if compiled without them, 
+    # but we try to use generic SSLContext to probe.
+    for version_name, proto in [("TLSv1.0", ssl.PROTOCOL_TLSv1), ("TLSv1.1", ssl.PROTOCOL_TLSv1_1)]:
         try:
-            context = ssl.SSLContext(version_const)
+            context = ssl.SSLContext(proto)
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-            try:
-                context.set_ciphers('DEFAULT:@SECLEVEL=0')
-            except: pass # 系统可能不支持设置 SECLEVEL
-
-            with socket.create_connection((target, port), timeout=2) as sock:
+            # CRITICAL: Lower security level to allow weak keys/protocols
+            try: context.set_ciphers('DEFAULT:@SECLEVEL=0')
+            except: pass
+            
+            with socket.create_connection((target, port), timeout=3) as sock:
                 with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
                     results["weak_protocols"].append(version_name)
-        except Exception: 
+        except:
             pass
 
-    # 2. 检测弱加密套件 (RC4)
+    # Specific probe for RC4 Ciphers
     try:
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        try:
-            context.set_ciphers('RC4:@SECLEVEL=0') # 强制尝试 RC4
-        except:
-            context.set_ciphers('RC4') 
-            
-        with socket.create_connection((target, port), timeout=2) as sock:
+        # Force RC4
+        try: context.set_ciphers('RC4:@SECLEVEL=0')
+        except: context.set_ciphers('RC4')
+        
+        with socket.create_connection((target, port), timeout=3) as sock:
             with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
                 cipher = ssock.cipher()
                 if cipher and 'RC4' in cipher[0]:
                     results["weak_ciphers"].append("RC4")
-                    results["vulnerabilities"].append("WEAK_CIPHER_RC4")
-    except Exception:
+    except:
         pass
 
-    # 3. 证书分析 (使用允许弱密钥的 Context)
+    # General Cert Info & Weak Key Check
     try:
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        try:
-            context.set_ciphers('DEFAULT:@SECLEVEL=0')
+        try: context.set_ciphers('DEFAULT:@SECLEVEL=0')
         except: pass
 
-        with socket.create_connection((target, port), timeout=3) as sock:
+        with socket.create_connection((target, port), timeout=4) as sock:
             with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
                 cert_bin = ssock.getpeercert(True)
                 cert = x509.load_der_x509_certificate(cert_bin, default_backend())
@@ -206,8 +115,7 @@ def check_tls_vulnerability(target: str, port: int, vhost: str = None):
                 
                 if is_expired: results["vulnerabilities"].append("CERT_EXPIRED")
                 if key_size < 2048: results["vulnerabilities"].append("WEAK_KEY_SIZE")
-    except Exception as e: 
-        # print(f"Cert Check Error: {e}")
+    except:
         pass
 
     return results
