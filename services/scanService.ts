@@ -47,45 +47,48 @@ export const performScan = async (
     }
 
     const { task_id } = await startResponse.json();
-    onProgress(5, "任务已同步到内核，排队中...");
+    onProgress(5, "Task queued. Waiting for worker...");
 
     const statusUrl = getApiUrl(apiBaseUrl, `/api/scan/status/${task_id}`);
     
-    const MAX_POLLS = 1200; 
+    // 增加最大轮询次数防止死循环，同时缩短间隔
+    const MAX_POLLS = 6000; 
     let polls = 0;
 
     while (polls < MAX_POLLS) {
       if (abortSignal.cancelled) {
-        onProgress(0, "审计任务已被用户中止。");
+        onProgress(0, "User aborted the scan.");
         throw new Error("审计已取消");
       }
 
       const statusResponse = await fetch(statusUrl);
-      if (!statusResponse.ok) throw new Error("查询任务进度时链路异常");
+      if (!statusResponse.ok) throw new Error("Connection lost to scan engine");
 
       const statusData = await statusResponse.json();
       
       if (statusData.status === 'completed') {
-        onProgress(100, "审计完成，正在同步报告...");
+        onProgress(100, "Scan finished. Finalizing report...");
         return statusData.result as ScanReport;
       }
       
       if (statusData.status === 'failed') {
-        throw new Error(statusData.error || "扫描引擎异常终止");
+        throw new Error(statusData.error || "Engine exited unexpectedly");
       }
 
       if (statusData.progress) {
-        onProgress(statusData.progress.percent || 10, statusData.progress.log || "正在探测...");
+        // 使用后端返回的原始日志，不加修饰
+        onProgress(statusData.progress.percent || 10, statusData.progress.log || "Scanning...");
       }
 
       polls++;
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // 关键修改：缩短轮询时间到 300ms，让日志看起来像实时刷屏
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
 
-    throw new Error("扫描任务执行超时。");
+    throw new Error("Task timed out.");
 
   } catch (error: any) {
     if (error.message === "审计已取消") throw error;
-    throw new Error(error.message || "审计服务异常");
+    throw new Error(error.message || "Unknown Service Error");
   }
 };

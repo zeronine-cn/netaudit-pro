@@ -68,21 +68,19 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             task_store[task_id]["progress"] = {"percent": pct, "log": log}
 
         # --- 修改点 1: 域名预解析，固定 IP ---
-        update_progress(1, f"正在解析目标地址: {request.target}")
+        update_progress(1, f"[*] Target Resolution: {request.target}")
         target_ip = request.target
         try:
-            # 简单的判断，如果包含字母则尝试解析
             if any(c.isalpha() for c in target_ip): 
                 target_ip = socket.gethostbyname(request.target)
-                update_progress(2, f"DNS 解析成功: {request.target} -> {target_ip}")
+                update_progress(2, f"[+] DNS Resolved: {request.target} -> {target_ip}")
         except Exception as e:
-            print(f"DNS解析失败，尝试直接使用目标: {e}")
-            update_progress(2, f"DNS 解析异常，使用原始目标: {target_ip}")
+            update_progress(2, f"[-] DNS Failed, using raw: {target_ip}")
 
-        # 1. 动态解析目标端口 (这是实际要扫描的端口列表)
+        # 1. 动态解析目标端口
         target_ports = parse_port_config(request.port_range)
         
-        # 2. 解析协议端口配置 (用于识别端口对应的服务类型)
+        # 2. 解析协议端口配置
         ssh_ports = parse_port_config(request.ports_config.get('ssh', '22'))
         http_ports = parse_port_config(request.ports_config.get('http', '80,8080'))
         https_ports = parse_port_config(request.ports_config.get('https', '443,8443'))
@@ -100,66 +98,59 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         port_status_summary = []
         
         if len(target_ports) == 0:
-            raise Exception("未指定扫描端口范围")
+            raise Exception("No port range specified")
 
-        # --- 修改点 2: 并发端口探测 (替换原有的 Step A) ---
-        update_progress(5, f"启动并发连接探测 (Target: {target_ip}, Ports: {len(target_ports)})")
+        # --- 修改点 2: 并发端口探测 ---
+        update_progress(5, f"[*] Starting Stealth SYN Scan (Ports: {len(target_ports)})...")
         
         active_ports = []
         with ThreadPoolExecutor(max_workers=50) as executor:
-            # 提交所有探测任务
             future_to_port = {executor.submit(probe_port, target_ip, p): p for p in target_ports}
             for future in as_completed(future_to_port):
                 p = future_to_port[future]
                 if future.result():
                     active_ports.append(p)
         
-        active_ports.sort() # 排序，方便查看报告
+        active_ports.sort()
         
         if not active_ports:
-            update_progress(100, "未发现任何开放端口，审计结束。")
-            # 如果没有端口开放，直接结束
+            update_progress(100, "[-] No open ports found. Scan aborted.")
             task_store[task_id] = {
                 "status": "completed", 
                 "result": {
                     "target": target_ip, "score": 100, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "defects": [], "port_statuses": [], "metadata": request.metadata, "summary": {"high": 0, "medium": 0, "low": 0}
                 }, 
-                "progress": {"percent": 100, "log": "未发现开放端口"}
+                "progress": {"percent": 100, "log": "[-] No open ports found"}
             }
             return
 
-        # --- 修改点 3: 针对存活端口进行深度扫描 (Step B) ---
+        # --- 修改点 3: 深度扫描与 Nmap 风格日志 ---
         total_active = len(active_ports)
-        update_progress(15, f"存活端口探测完毕，发现 {total_active} 个开放端口: {active_ports}")
-        time.sleep(0.5) # 让用户看清日志
+        update_progress(15, f"[+] Discovered {total_active} open ports: {active_ports}")
+        time.sleep(0.5)
 
         for idx, port in enumerate(active_ports):
-            # 进度条计算：从 20% 开始，到 90% 结束
             progress_pct = 20 + int((idx / total_active) * 70)
             
-            # 由于已经是 active_ports，无需再次 socket 探测存活，直接进行服务识别
             current_protocol = "TCP"
-            service_detail = "Unknown Service"
+            service_detail = "Unknown"
             
             # 1. SSH 服务审计
             if port in ssh_ports:
                 current_protocol = "SSH"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (SSH) - 获取 Banner...")
+                update_progress(progress_pct, f"[*] Scanning {port}/tcp (SSH)...")
                 
-                # 始终获取 Banner
                 banner = check_ssh_banner(target_ip, port)
                 service_detail = banner
                 
+                # Nmap 风格: 发现服务
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Service: {banner}")
+
                 weak_creds = []
-                # 【关键逻辑】仅在 "深度审计" 模式下且开启爆破时，才执行耗时的 SSH 爆破
                 if request.mode == "深度审计" and request.enable_brute and users and passwords:
-                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} (SSH) - 启动弱口令爆破 (深度模式)...")
+                    update_progress(progress_pct, f"[*] {port}/tcp >> Brute-forcing ({len(users)*len(passwords)} attempts)...")
                     weak_creds = brute_force_ssh(target_ip, port, users, passwords)
-                    if weak_creds:
-                        update_progress(progress_pct, f"[{idx+1}/{total_active}] 警告: 端口 {port} 发现有效弱口令!")
-                elif request.enable_brute:
-                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} (SSH) - 跳过爆破 (当前非深度模式)")
                 
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
                 all_findings.extend(findings)
@@ -168,29 +159,24 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             elif port in http_ports or port in https_ports:
                 protocol_name = "HTTPS" if port in https_ports else "HTTP"
                 current_protocol = protocol_name
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} ({protocol_name}) - Web 指纹识别...")
+                update_progress(progress_pct, f"[*] Scanning {port}/tcp ({protocol_name})...")
                 
-                # 确定 VHost
                 primary_vhost = request.domains[0] if request.domains else None
                 
-                # 调用 scanners/web_scan.py
                 web_res = scan_http(target_ip, port, vhost=primary_vhost)
                 service_detail = web_res.get("banner", "Web Server")
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Service: {service_detail}")
                 
-                # VHost 碰撞 (仅深度模式或指定域名时)
                 verified_vhosts = []
                 if request.mode == "深度审计" and request.domains:
-                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} - 正在进行 VHost 碰撞探测...")
                     for domain in request.domains:
                         if verify_vhost(target_ip, port, domain):
                             verified_vhosts.append(domain)
                 
-                # TLS 检测 (仅 HTTPS)
                 tls_res = {}
                 if protocol_name == "HTTPS":
-                    update_progress(progress_pct, f"[{idx+1}/{total_active}] 端口 {port} - 正在检测 SSL/TLS 配置安全性...")
                     tls_res = check_tls_vulnerability(target_ip, port, vhost=primary_vhost)
-                
+
                 findings = analyzer.analyze_service(protocol_name, port, service_detail, {
                     "web_results": web_res,
                     "tls_results": tls_res,
@@ -201,71 +187,87 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             # 3. DNS 服务审计
             elif port in dns_ports:
                 current_protocol = "DNS"
-                service_detail = "DNS Server"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (DNS) - 检查区域传送漏洞...")
+                service_detail = "DNS"
+                update_progress(progress_pct, f"[*] Scanning {port}/tcp (DNS)...")
                 
                 dns_res = {}
                 if request.domains:
-                    # 尝试区域传送
                     for domain in request.domains:
                         res = check_zone_transfer(domain, target_ip, port)
                         if res.get("vulnerable"):
                             dns_res = res
-                            service_detail = f"AXFR Leak ({domain})"
+                            service_detail = "AXFR Leaked"
                             break
                         else:
                             dns_res = res
-                else:
-                    dns_res = {"vulnerable": False, "detail": "Skipped (No Domain Provided)"}
-
+                
                 findings = analyzer.analyze_service("DNS", port, service_detail, {"dns_results": dns_res})
                 all_findings.extend(findings)
 
-            # 4. MySQL 审计
+            # 4. MySQL
             elif port in mysql_ports:
                 current_protocol = "MySQL"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (MySQL) - 协议握手探测...")
-                # 调用 scanners/db_scan.py
+                update_progress(progress_pct, f"[*] Scanning {port}/tcp (MySQL)...")
                 res = scan_mysql(target_ip, port)
-                service_detail = res.get("banner", "MySQL Service")
+                service_detail = res.get("banner", "MySQL")
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Version: {service_detail}")
                 findings = analyzer.analyze_service("MySQL", port, service_detail, {"db_results": res})
                 all_findings.extend(findings)
             
-            # 5. Redis 审计
+            # 5. Redis
             elif port in redis_ports:
                 current_protocol = "Redis"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (Redis) - 检测未授权访问...")
-                # 调用 scanners/db_scan.py
+                update_progress(progress_pct, f"[*] Scanning {port}/tcp (Redis)...")
                 res = scan_redis(target_ip, port)
-                service_detail = res.get("detail", "Redis Service")
+                service_detail = "Redis"
                 findings = analyzer.analyze_service("Redis", port, "Redis Server", {"db_results": res})
                 all_findings.extend(findings)
 
-            # 6. PostgreSQL 审计
+            # 6. 其他数据库
             elif port in postgres_ports:
                 current_protocol = "PostgreSQL"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (PostgreSQL)...")
-                # 调用 scanners/db_scan.py
                 res = scan_postgres(target_ip, port)
                 service_detail = res.get("banner", "PostgreSQL")
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Service: {service_detail}")
                 findings = analyzer.analyze_service("PostgreSQL", port, service_detail, {"db_results": res})
                 all_findings.extend(findings)
-
-            # 7. MongoDB 审计
+            
             elif port in mongo_ports:
                 current_protocol = "MongoDB"
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 正在审计端口 {port} (MongoDB)...")
-                # 调用 scanners/db_scan.py
                 res = scan_mongodb(target_ip, port)
                 service_detail = res.get("banner", "MongoDB")
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Service: {service_detail}")
                 findings = analyzer.analyze_service("MongoDB", port, service_detail, {"db_results": res})
                 all_findings.extend(findings)
 
-            # 8. 通用 TCP 兜底
             else:
-                update_progress(progress_pct, f"[{idx+1}/{total_active}] 记录开放端口 {port} (Generic TCP)...")
+                update_progress(progress_pct, f"[+] {port}/tcp OPEN | Service: Unknown")
                 findings = analyzer.analyze_service("TCP", port, "Generic TCP", {})
                 all_findings.extend(findings)
+
+            # --- 关键逻辑：将扫描出的缺陷实时打印到日志 ---
+            for f in findings:
+                # 只显示非安全的项，或者你可以选择全部显示
+                if f['risk_level'] == '安全': continue
+                
+                # 确定前缀
+                prefix = "[!]" if f['risk_level'] in ['高危', '中危'] else "[-]"
+                
+                # 构造类似 Nmap Script 的输出，不包含 MLPS 条款
+                # 格式: [!] <Check Item> detected | Detail: <Detail>
+                msg = f"{prefix} {f['check_item']}"
+                
+                # 提取精简详情
+                detail = str(f.get('detail_value', '')).strip()
+                if detail and detail != "None":
+                     clean_detail = detail.replace('\n', ' ').replace('\r', '')
+                     if len(clean_detail) > 60: clean_detail = clean_detail[:57] + "..."
+                     msg += f" | {clean_detail}"
+                
+                update_progress(progress_pct, msg)
+                # 关键：稍微暂停一下，确保前端轮询能抓取到这条日志，形成刷屏感
+                time.sleep(0.4)
+            # -----------------------------------------------
 
             port_status_summary.append({
                 "port": port, 
@@ -274,8 +276,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 "detail": service_detail
             })
 
-        update_progress(95, "所有端口审计完成，正在生成合规报告...")
-        # 计算总分
+        update_progress(95, "[*] Post-scan scripts finished. Generating report...")
         score = analyzer.calculate_score(all_findings)
         
         report = {
@@ -291,7 +292,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 "low": len([d for d in all_findings if d["risk_level"] == "低危"])
             }
         }
-        task_store[task_id] = {"status": "completed", "result": report, "progress": {"percent": 100, "log": "审计完成"}}
+        task_store[task_id] = {"status": "completed", "result": report, "progress": {"percent": 100, "log": "Audit Completed"}}
     except Exception as e:
         print(f"Task Error: {e}")
         task_store[task_id] = {"status": "failed", "error": str(e)}
@@ -299,7 +300,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 @app.post("/api/scan")
 async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    task_store[task_id] = {"status": "running", "progress": {"percent": 0, "log": "初始化"}}
+    task_store[task_id] = {"status": "running", "progress": {"percent": 0, "log": "Initializing Engine..."}}
     background_tasks.add_task(run_deep_scan, task_id, request)
     return {"task_id": task_id}
 
