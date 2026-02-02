@@ -37,9 +37,16 @@ def verify_vhost(target: str, port: int, vhost: str):
     验证域名是否真的是该 IP 承载的有效虚拟主机
     """
     try:
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        # 尝试创建一个极低安全级别的 context，以防服务端使用弱密钥
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            context.set_ciphers('DEFAULT:@SECLEVEL=0')
+        except:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
         
         with socket.create_connection((target, port), timeout=3) as sock:
             with context.wrap_socket(sock, server_hostname=vhost) as ssock:
@@ -99,6 +106,7 @@ def scan_http(target: str, port: int, vhost: str = None):
         headers = {'User-Agent': 'NetAudit-Audit-Bot/3.1'}
         if vhost: headers['Host'] = vhost
             
+        # requests 默认会验证 SSL，这里 verify=False 忽略证书错误以便获取 Banner
         response = requests.get(url, headers=headers, timeout=4, allow_redirects=False, verify=False)
         server_banner = response.headers.get('Server', 'Unknown')
         
@@ -123,43 +131,83 @@ def scan_http(target: str, port: int, vhost: str = None):
             }
         }
     except Exception as e:
+        # 即使报错，如果能拿到 error message 也返回
         return {"port": port, "status": "CLOSED", "error": str(e)}
 
 def check_tls_vulnerability(target: str, port: int, vhost: str = None):
     results = {
         "weak_protocols": [],
+        "weak_ciphers": [],
         "cert_info": None,
         "vulnerabilities": []
     }
     
-    # 1. 检测老旧协议
+    # 1. 检测老旧协议 (TLS 1.0 / 1.1)
+    # 关键：必须设置 SECLEVEL=0，否则 OpenSSL 可能会在客户端直接拒绝连接，导致无法检测
     for version_name, version_const in [("TLSv1.0", ssl.PROTOCOL_TLSv1), ("TLSv1.1", ssl.PROTOCOL_TLSv1_1)]:
         try:
             context = ssl.SSLContext(version_const)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            try:
+                context.set_ciphers('DEFAULT:@SECLEVEL=0')
+            except: pass # 系统可能不支持设置 SECLEVEL
+
             with socket.create_connection((target, port), timeout=2) as sock:
                 with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
                     results["weak_protocols"].append(version_name)
+        except Exception: 
+            pass
+
+    # 2. 检测弱加密套件 (RC4)
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            context.set_ciphers('RC4:@SECLEVEL=0') # 强制尝试 RC4
+        except:
+            context.set_ciphers('RC4') 
+            
+        with socket.create_connection((target, port), timeout=2) as sock:
+            with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
+                cipher = ssock.cipher()
+                if cipher and 'RC4' in cipher[0]:
+                    results["weak_ciphers"].append("RC4")
+                    results["vulnerabilities"].append("WEAK_CIPHER_RC4")
+    except Exception:
+        pass
+
+    # 3. 证书分析 (使用允许弱密钥的 Context)
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            context.set_ciphers('DEFAULT:@SECLEVEL=0')
         except: pass
 
-    # 2. 证书分析
-    try:
-        cert_pem = ssl.get_server_certificate((target, port))
-        cert = x509.load_pem_x509_certificate(cert_pem.encode(), default_backend())
-        
-        now = datetime.utcnow()
-        is_expired = now > cert.not_valid_after
-        pub_key = cert.public_key()
-        key_size = getattr(pub_key, 'key_size', 2048)
-        
-        results["cert_info"] = {
-            "subject": cert.subject.rfc4514_string(),
-            "expiry": cert.not_valid_after.strftime("%Y-%m-%d"),
-            "key_size": key_size,
-            "is_expired": is_expired
-        }
-        
-        if is_expired: results["vulnerabilities"].append("CERT_EXPIRED")
-        if key_size < 2048: results["vulnerabilities"].append("WEAK_KEY_SIZE")
-    except: pass
+        with socket.create_connection((target, port), timeout=3) as sock:
+            with context.wrap_socket(sock, server_hostname=vhost if vhost else target) as ssock:
+                cert_bin = ssock.getpeercert(True)
+                cert = x509.load_der_x509_certificate(cert_bin, default_backend())
+                
+                now = datetime.utcnow()
+                is_expired = now > cert.not_valid_after
+                pub_key = cert.public_key()
+                key_size = getattr(pub_key, 'key_size', 2048)
+                
+                results["cert_info"] = {
+                    "subject": cert.subject.rfc4514_string(),
+                    "expiry": cert.not_valid_after.strftime("%Y-%m-%d"),
+                    "key_size": key_size,
+                    "is_expired": is_expired
+                }
+                
+                if is_expired: results["vulnerabilities"].append("CERT_EXPIRED")
+                if key_size < 2048: results["vulnerabilities"].append("WEAK_KEY_SIZE")
+    except Exception as e: 
+        # print(f"Cert Check Error: {e}")
+        pass
 
     return results

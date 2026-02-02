@@ -12,6 +12,8 @@ def check_zone_transfer(domain: str, nameserver: str, port: int = 53):
         # 尝试进行区域传送请求，显式指定端口
         # xfr 返回一个生成器
         xfr_query = dns.query.xfr(nameserver, domain, port=port, timeout=5)
+        
+        # 如果连接被拒绝，from_xfr 可能会抛出异常
         zone = dns.zone.from_xfr(xfr_query)
         
         if zone:
@@ -24,8 +26,11 @@ def check_zone_transfer(domain: str, nameserver: str, port: int = 53):
                 "records": [str(n) for n in nodes[:10]] # 记录前10条作为证据
             }
     except Exception as e:
+        error_msg = str(e)
+        if "Connection refused" in error_msg or "timed out" in error_msg:
+             return {"vulnerable": False, "detail": f"DNS Connect Failed: {error_msg}"}
         return {
             "vulnerable": False,
-            "detail": f"探测失败: {str(e)}"
+            "detail": f"Transfer Failed: {error_msg}"
         }
     return {"vulnerable": False, "detail": "Connection Refused or No Data"}

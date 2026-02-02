@@ -30,26 +30,32 @@ function App() {
 
   const [scanDraft, setScanDraft] = useState({
     target: '127.0.0.1',
-    domainStr: '', 
-    portRange: '22, 80, 443, 3306, 6379, 5432, 27017',
-    assetName: '',
+    domainStr: 'vuln.test', 
+    portRange: '2222, 8080, 8443, 5353',
+    assetName: 'Target-Vuln-Env',
     securityLevel: '', 
     location: '',      
     evaluator: ''       
   });
   
   const [config, setConfig] = useState<AppConfig>(() => {
-    // 定义完整的默认配置，包含所有8个端口
+    // 定义完整的默认配置，包含所有8个端口，适配靶场非标准端口
     const defaultConfig: AppConfig = {
       apiBaseUrl: window.location.origin,
       adminPassword: 'admin888',
       ports: { 
-        ssh: '22', http: '80, 8080', https: '443, 8443', dns: '53',
-        mysql: '3306', redis: '6379', postgres: '5432', mongodb: '27017'
+        ssh: '22, 2222', 
+        http: '80, 8080', 
+        https: '443, 8443', 
+        dns: '53, 5353',
+        mysql: '3306', 
+        redis: '6379', 
+        postgres: '5432', 
+        mongodb: '27017'
       },
       dictionaries: { 
         usernames: 'root\nadmin', 
-        passwords: 'password\n123456',
+        passwords: 'password\n123456\n12345678',
         db_usernames: 'root\nadmin\npostgres\nsa',
         db_passwords: 'root\nadmin\npassword\n123456'
       },
@@ -60,9 +66,9 @@ function App() {
       },
       defaultMetadata: {
         securityLevel: '三级',
-        location: '上海金桥机房',
-        evaluator: '审计员A',
-        assetNamePrefix: 'SVR-'
+        location: '本地靶场环境',
+        evaluator: '安全审计员',
+        assetNamePrefix: 'VULN-'
       }
     };
 
@@ -71,7 +77,6 @@ function App() {
         try {
             const parsed = JSON.parse(savedConfig);
             // 关键修复：深度合并逻辑
-            // 即使缓存中缺少 mysql/redis 等字段，也会从 defaultConfig 中补全
             return {
                 ...defaultConfig,
                 ...parsed,

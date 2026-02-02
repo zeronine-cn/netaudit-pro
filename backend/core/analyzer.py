@@ -138,13 +138,24 @@ class SecurityAnalyzer:
                 if weak_protos:
                     findings.append({
                         "id": f"TLS-OLD-{port}", "protocol": "HTTPS",
-                        "check_item": "使用了不安全的加密协议", "risk_level": "高危",
+                        "check_item": "使用了不安全的加密协议 (TLS 1.0/1.1)", "risk_level": "高危",
                         "description": f"服务器启用了已弃用的老旧协议: {', '.join(weak_protos)}。",
                         "detail_value": str(weak_protos),
                         "suggestion": "禁用 TLSv1.0/1.1，仅启用 TLSv1.2 及以上版本。",
                         "mlps_clause": "G3-安全通信网络-通信保密性"
                     })
                 
+                # 新增：弱加密套件检测
+                if "WEAK_CIPHER_RC4" in tls_res.get("vulnerabilities", []):
+                    findings.append({
+                        "id": f"TLS-WEAK-CIPHER-{port}", "protocol": "HTTPS",
+                        "check_item": "启用了弱加密套件 (RC4)", "risk_level": "高危",
+                        "description": "服务器允许使用 RC4 等已被破解的加密算法，无法保证通信机密性。",
+                        "detail_value": "Cipher: RC4",
+                        "suggestion": "在 Nginx/Apache 配置中禁用 RC4、DES、MD5 等弱算法。",
+                        "mlps_clause": "G3-安全通信网络-通信保密性"
+                    })
+
                 cert_vulns = tls_res.get("vulnerabilities", [])
                 if "CERT_EXPIRED" in cert_vulns:
                     findings.append({
@@ -153,6 +164,15 @@ class SecurityAnalyzer:
                         "description": "服务器使用的数字证书已过期，无法保证通信可信度。",
                         "detail_value": f"Expired: {tls_res.get('cert_info', {}).get('expiry')}",
                         "suggestion": "立即更换有效的数字证书。",
+                        "mlps_clause": "G3-安全通信网络-通信保密性"
+                    })
+                if "WEAK_KEY_SIZE" in cert_vulns:
+                    findings.append({
+                        "id": f"TLS-WEAK-KEY-{port}", "protocol": "HTTPS",
+                        "check_item": "数字证书密钥强度不足", "risk_level": "高危",
+                        "description": "证书公钥长度小于 2048 位 (当前检测到弱密钥)。",
+                        "detail_value": f"Key Size: {tls_res.get('cert_info', {}).get('key_size')} bits",
+                        "suggestion": "重新生成证书，确保 RSA 密钥长度至少为 2048 位。",
                         "mlps_clause": "G3-安全通信网络-通信保密性"
                     })
 
@@ -172,14 +192,13 @@ class SecurityAnalyzer:
                  findings.append({
                     "id": f"DNS-OPEN-{port}", "protocol": protocol,
                     "check_item": "DNS 服务开放", "risk_level": "低危",
-                    "description": "检测到 DNS (53) 端口开放，未发现区域传送风险。",
+                    "description": "检测到 DNS 端口开放，未发现区域传送风险。",
                     "detail_value": res.get("detail", "No Transfer"),
                     "suggestion": "确保仅对内网开放或已配置 ACL 访问控制。",
                     "mlps_clause": "G3-安全区域边界-访问控制"
                 })
 
-        # --- 新增逻辑：高危/非必要端口判定 ---
-        # 定义高危/不建议开放的端口列表
+        # --- 高危/非必要端口判定 ---
         RISKY_PORTS = {
             21: {"name": "FTP", "desc": "明文传输协议，建议使用 SFTP", "risk": "中危"},
             23: {"name": "Telnet", "desc": "明文传输协议，完全不安全，建议使用 SSH", "risk": "高危"},
