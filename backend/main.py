@@ -19,13 +19,7 @@ from scanners.dns_scan import check_zone_transfer
 
 app = FastAPI(title="NetAudit 审计引擎 V3.2")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 analyzer = SecurityAnalyzer()
 task_store: Dict[str, Any] = {}
@@ -52,41 +46,29 @@ def probe_port(ip: str, port: int) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=0.5) as s:
             return True
-    except:
-        return False
+    except: return False
 
 def run_deep_scan(task_id: str, request: ScanRequest):
     try:
         def update_progress(pct, log):
             task_store[task_id]["progress"] = {"percent": pct, "log": log}
 
-        update_progress(1, f"[*] Target Resolution: {request.target}")
+        update_progress(1, f"[*] Target: {request.target}")
         target_ip = request.target
         try:
             if any(c.isalpha() for c in target_ip): 
                 target_ip = socket.gethostbyname(request.target)
-                update_progress(2, f"[+] DNS Resolved: {request.target} -> {target_ip}")
-        except:
-            update_progress(2, f"[-] Using raw target: {target_ip}")
+        except: pass
 
         target_ports = parse_port_config(request.port_range)
         
-        # 显式包含并支持靶场非标端口
+        # 靶场专用端口映射
         ssh_ports = parse_port_config(request.ports_config.get('ssh', '22,2222'))
         http_ports = parse_port_config(request.ports_config.get('http', '80,8080'))
         https_ports = parse_port_config(request.ports_config.get('https', '443,8443'))
         dns_ports = parse_port_config(request.ports_config.get('dns', '53,5353'))
         mysql_ports = parse_port_config(request.ports_config.get('mysql', '3306'))
-        redis_ports = parse_port_config(request.ports_config.get('redis', '6379'))
 
-        users = [u.strip() for u in request.dictionaries.get('usernames', '').split('\n') if u.strip()]
-        passwords = [p.strip() for p in request.dictionaries.get('passwords', '').split('\n') if p.strip()]
-        
-        all_findings = []
-        port_status_summary = []
-        
-        update_progress(5, f"[*] Initializing stealth scan on {len(target_ports)} ports...")
-        
         active_ports = []
         with ThreadPoolExecutor(max_workers=50) as executor:
             future_to_port = {executor.submit(probe_port, target_ip, p): p for p in target_ports}
@@ -95,49 +77,44 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 if future.result(): active_ports.append(p)
         active_ports.sort()
         
-        if not active_ports:
-            update_progress(100, "[-] No open ports found.")
-            task_store[task_id] = {"status": "completed", "result": {"target": target_ip, "score": 100, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"), "defects": [], "port_statuses": []}, "progress": {"percent": 100, "log": "Audit Finished"}}
-            return
-
+        all_findings = []
+        port_status_summary = []
+        
         total_active = len(active_ports)
-        update_progress(15, f"[+] Discovered {total_active} active ports. Starting script scan...")
-
+        if total_active == 0:
+            update_progress(100, "[-] No open ports.")
+        
         for idx, port in enumerate(active_ports):
             progress_pct = 20 + int((idx / total_active) * 70)
             service_detail = "Unknown"
             current_protocol = "TCP"
             findings = []
 
-            # 1. SSH (22 / 2222)
+            # 路由逻辑：适配 2222/8080/8443/5353 等靶场端口
             if port in ssh_ports:
                 current_protocol = "SSH"
-                update_progress(progress_pct, f"[*] Fingerprinting SSH on {port}...")
                 banner = check_ssh_banner(target_ip, port)
                 service_detail = banner
                 weak_creds = []
                 if request.mode == "深度审计" and request.enable_brute:
-                    update_progress(progress_pct, f"[*] Brute-forcing {port}/tcp...")
-                    weak_creds = brute_force_ssh(target_ip, port, users, passwords)
+                    update_progress(progress_pct, f"[*] Brute-forcing SSH {port}...")
+                    weak_creds = brute_force_ssh(target_ip, port, request.dictionaries.get('usernames','').split('\n'), request.dictionaries.get('passwords','').split('\n'))
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
 
-            # 2. Web (80, 8080, 443, 8443)
             elif port in http_ports or port in https_ports:
                 proto_name = "HTTPS" if port in https_ports else "HTTP"
                 current_protocol = proto_name
-                update_progress(progress_pct, f"[*] Auditing Web on {port}...")
-                primary_vhost = request.domains[0] if request.domains else None
-                
-                # 扫描 HTTP/HTTPS 基础信息
-                web_res = scan_http(target_ip, port, vhost=primary_vhost)
+                update_progress(progress_pct, f"[*] Auditing Web {port}...")
+                vhost = request.domains[0] if request.domains else None
+                web_res = scan_http(target_ip, port, vhost=vhost)
                 service_detail = web_res.get("banner", "Web Server")
                 
-                # 补全：调用敏感路径探测逻辑
-                sensitive_paths = check_sensitive_paths(target_ip, port, vhost=primary_vhost)
+                # 专项探测：敏感路径
+                sensitive_paths = check_sensitive_paths(target_ip, port, vhost=vhost)
                 
                 tls_res = {}
                 if proto_name == "HTTPS":
-                    tls_res = check_tls_vulnerability(target_ip, port, vhost=primary_vhost)
+                    tls_res = check_tls_vulnerability(target_ip, port, vhost=vhost)
                 
                 findings = analyzer.analyze_service(proto_name, port, service_detail, {
                     "web_results": web_res, 
@@ -145,47 +122,35 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                     "sensitive_paths": sensitive_paths
                 })
 
-            # 3. DNS (53 / 5353)
             elif port in dns_ports:
                 current_protocol = "DNS"
-                update_progress(progress_pct, f"[*] Checking DNS on {port}...")
                 dns_res = {}
                 if request.domains:
-                    for domain in request.domains:
-                        res = check_zone_transfer(domain, target_ip, port)
+                    for d in request.domains:
+                        res = check_zone_transfer(d, target_ip, port)
                         if res.get("vulnerable"):
                             dns_res = res
-                            service_detail = "AXFR Enabled"
+                            service_detail = "AXFR Allowed"
                             break
-                        dns_res = res
                 findings = analyzer.analyze_service("DNS", port, service_detail, {"dns_results": dns_res})
 
-            # 4. DB (MySQL / Redis)
             elif port in mysql_ports:
                 current_protocol = "MySQL"
-                update_progress(progress_pct, f"[*] Probing MySQL on {port}...")
                 db_res = scan_mysql(target_ip, port)
                 findings = analyzer.analyze_service("MySQL", port, db_res.get("banner", "MySQL"), {"db_results": db_res})
-            elif port in redis_ports:
-                current_protocol = "Redis"
-                update_progress(progress_pct, f"[*] Probing Redis on {port}...")
-                db_res = scan_redis(target_ip, port)
-                findings = analyzer.analyze_service("Redis", port, "Redis", {"db_results": db_res})
 
-            # Real-time Log for defects
             for f in findings:
-                if f['risk_level'] == '安全': continue
-                prefix = "[!]" if f['risk_level'] in ['高危', '中危'] else "[-]"
-                update_progress(progress_pct, f"{prefix} {f['check_item']} | {f.get('detail_value', '')}")
-                time.sleep(0.3)
+                if f['risk_level'] != '安全':
+                    update_progress(progress_pct, f"[!] Found: {f['check_item']}")
+                    time.sleep(0.2)
 
             all_findings.extend(findings)
             port_status_summary.append({"port": port, "protocol": current_protocol, "status": "OPEN", "detail": service_detail})
 
-        score = analyzer.calculate_score(all_findings)
         report = {
-            "target": target_ip, "score": score, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "defects": all_findings, "port_statuses": port_status_summary, "metadata": request.metadata,
+            "target": target_ip, "score": analyzer.calculate_score(all_findings),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "defects": all_findings, "port_statuses": port_status_summary,
             "summary": {
                 "high": len([d for d in all_findings if d["risk_level"] == "高危"]),
                 "medium": len([d for d in all_findings if d["risk_level"] == "中危"]),
