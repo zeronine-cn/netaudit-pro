@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Imports
 from core.analyzer import SecurityAnalyzer
-from scanners.web_scan import scan_http, check_tls_vulnerability
+from scanners.web_scan import scan_http, check_tls_vulnerability, check_sensitive_paths
 from scanners.sys_scan import check_ssh_banner, brute_force_ssh
 from scanners.db_scan import scan_mysql, scan_redis, scan_postgres, scan_mongodb
 from scanners.dns_scan import check_zone_transfer
@@ -71,7 +71,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
         target_ports = parse_port_config(request.port_range)
         
-        # 适配靶场非标端口
+        # 显式包含并支持靶场非标端口
         ssh_ports = parse_port_config(request.ports_config.get('ssh', '22,2222'))
         http_ports = parse_port_config(request.ports_config.get('http', '80,8080'))
         https_ports = parse_port_config(request.ports_config.get('https', '443,8443'))
@@ -109,7 +109,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             current_protocol = "TCP"
             findings = []
 
-            # 1. SSH
+            # 1. SSH (22 / 2222)
             if port in ssh_ports:
                 current_protocol = "SSH"
                 update_progress(progress_pct, f"[*] Fingerprinting SSH on {port}...")
@@ -121,20 +121,31 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                     weak_creds = brute_force_ssh(target_ip, port, users, passwords)
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
 
-            # 2. Web
+            # 2. Web (80, 8080, 443, 8443)
             elif port in http_ports or port in https_ports:
                 proto_name = "HTTPS" if port in https_ports else "HTTP"
                 current_protocol = proto_name
                 update_progress(progress_pct, f"[*] Auditing Web on {port}...")
                 primary_vhost = request.domains[0] if request.domains else None
+                
+                # 扫描 HTTP/HTTPS 基础信息
                 web_res = scan_http(target_ip, port, vhost=primary_vhost)
                 service_detail = web_res.get("banner", "Web Server")
+                
+                # 补全：调用敏感路径探测逻辑
+                sensitive_paths = check_sensitive_paths(target_ip, port, vhost=primary_vhost)
+                
                 tls_res = {}
                 if proto_name == "HTTPS":
                     tls_res = check_tls_vulnerability(target_ip, port, vhost=primary_vhost)
-                findings = analyzer.analyze_service(proto_name, port, service_detail, {"web_results": web_res, "tls_results": tls_res})
+                
+                findings = analyzer.analyze_service(proto_name, port, service_detail, {
+                    "web_results": web_res, 
+                    "tls_results": tls_res,
+                    "sensitive_paths": sensitive_paths
+                })
 
-            # 3. DNS
+            # 3. DNS (53 / 5353)
             elif port in dns_ports:
                 current_protocol = "DNS"
                 update_progress(progress_pct, f"[*] Checking DNS on {port}...")
@@ -149,7 +160,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                         dns_res = res
                 findings = analyzer.analyze_service("DNS", port, service_detail, {"dns_results": dns_res})
 
-            # 4. DB
+            # 4. DB (MySQL / Redis)
             elif port in mysql_ports:
                 current_protocol = "MySQL"
                 update_progress(progress_pct, f"[*] Probing MySQL on {port}...")
@@ -161,7 +172,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 db_res = scan_redis(target_ip, port)
                 findings = analyzer.analyze_service("Redis", port, "Redis", {"db_results": db_res})
 
-            # Real-time Log
+            # Real-time Log for defects
             for f in findings:
                 if f['risk_level'] == '安全': continue
                 prefix = "[!]" if f['risk_level'] in ['高危', '中危'] else "[-]"

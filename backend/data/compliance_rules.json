@@ -8,13 +8,13 @@
     "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在已知加密弱点。",
     "suggestion": "请在 Web 服务器 (Nginx/Apache) 配置中禁用 TLSv1.0/1.1，仅启用 TLSv1.2 和 TLSv1.3。"
   },
-  "WEAK_KEY_SIZE": {
+  "TLS_WEAK_KEY": {
     "name": "数字证书密钥强度不足",
     "risk_level": "高危",
     "clause_id": "G3-安全通信网络-通信保密性",
     "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
-    "description": "检测到证书公钥长度小于 2048 位（当前为 1024 位），不符合等保基线和现代安全强度要求。",
-    "suggestion": "请重新生成私钥和证书，确保 RSA 密钥长度至少为 2048 位。"
+    "description": "检测到证书公钥长度小于 2048 位，不符合现代安全强度及等保基线要求，易受算力攻击破解。",
+    "suggestion": "请重新生成使用 2048 位或更高强度 RSA 密钥的数字证书，并更新至 Web 服务。"
   },
   "TLS_WEAK_CIPHER": {
     "name": "启用了弱加密套件 (RC4/DES)",
@@ -76,8 +76,8 @@
     "name": "DNS 区域传送漏洞 (AXFR)",
     "risk_level": "高危",
     "clause_id": "G3-安全区域边界-边界防护",
-    "clause_content": "应关闭不需要的系统服务和高危端口。",
-    "description": "DNS 服务器允许非授权的区域传送请求，导致域内所有主机记录（包含敏感业务记录）泄露。",
+    "clause_content": "应关闭不需要的系统服务 and 高危端口。",
+    "description": "DNS 服务器允许非授权的区域传送请求，导致域内所有主机记录泄露。",
     "suggestion": "在 Bind9 配置中设置 allow-transfer { none; }; 或指定受信的主从同步 IP。"
   }
 }

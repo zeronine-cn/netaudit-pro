@@ -48,14 +48,14 @@ class SecurityAnalyzer:
             web_res = extra.get("web_results", {})
             tls_res = extra.get("tls_results", {})
 
-            # 敏感文件检测
-            exposed = web_res.get("deep_scan", {}).get("exposed_paths", [])
-            for item in exposed:
+            # 敏感文件检测（基于新增的 check_sensitive_paths 结果）
+            exposed_paths = extra.get("sensitive_paths", [])
+            for item in exposed_paths:
                 findings.append({
                     "id": f"WEB-FILE-{port}-{item['path']}", "protocol": protocol,
                     "check_item": "Web 敏感文件/目录泄露", "risk_level": "高危",
                     "description": f"探测到敏感路径 {item['path']} 可直接访问。",
-                    "detail_value": f"Path: {item['path']}, Status: {item['status']}",
+                    "detail_value": f"Path: {item['path']}, Evidence: {item.get('evidence', '')}",
                     "suggestion": "立即删除该文件或限制目录访问权限。", "mlps_clause": "G3-安全计算环境-入侵防范"
                 })
 
@@ -100,13 +100,14 @@ class SecurityAnalyzer:
                             "detail_value": f"Expired at {cert_info.get('expiry')}",
                             "suggestion": "立即更换有效证书。", "mlps_clause": "G3-安全通信网络-通信保密性"
                         })
+                    # 关键补全：密钥强度判定
                     if cert_info.get("key_size", 2048) < 2048:
                         findings.append({
                             "id": f"TLS-WEAK-KEY-{port}", "protocol": "HTTPS",
                             "check_item": "数字证书密钥强度不足", "risk_level": "高危",
-                            "description": f"证书密钥长度为 {cert_info.get('key_size')} 位，低于 2048 位基线要求。",
+                            "description": f"证书密钥长度为 {cert_info.get('key_size')} 位，低于 2048 位等保基线要求。",
                             "detail_value": f"Current Key Size: {cert_info.get('key_size')} bits",
-                            "suggestion": "重新生成 2048 位强度的证书。", "mlps_clause": "G3-安全通信网络-通信保密性"
+                            "suggestion": "重新生成使用 2048 位或更高强度 RSA 密钥的数字证书。", "mlps_clause": "G3-安全通信网络-通信保密性"
                         })
 
         # 3. DNS (53, 5353)
@@ -133,7 +134,7 @@ class SecurityAnalyzer:
                     "suggestion": "通过防火墙限制该端口的访问来源。", "mlps_clause": "G3-安全区域边界-访问控制"
                 })
 
-        # 兜底
+        # 兜底项
         if not findings:
             findings.append({
                 "id": f"PORT-{port}", "protocol": protocol, "check_item": "常规服务开放", 

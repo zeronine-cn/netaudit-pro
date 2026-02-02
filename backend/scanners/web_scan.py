@@ -15,7 +15,8 @@ SENSITIVE_PATHS = [
     "/phpinfo.php",
     "/.vscode/sftp.json",
     "/config.php.bak",
-    "/.htaccess"
+    "/.htaccess",
+    "/.bak"
 ]
 
 SECURITY_HEADERS = [
@@ -26,22 +27,46 @@ SECURITY_HEADERS = [
     "Referrer-Policy"
 ]
 
-def probe_sensitive_paths(base_url, headers):
+def check_sensitive_paths(target: str, port: int, vhost: str = None):
+    """
+    并发探测敏感目录及文件暴露。
+    针对 .env, .git, phpinfo 等进行特征指纹校验。
+    """
+    protocol = "https" if port in [443, 8443] else "http"
+    base_url = f"{protocol}://{target}:{port}"
+    headers = {'User-Agent': 'NetAudit-Audit-Bot/3.2'}
+    if vhost: headers['Host'] = vhost
+    
     exposed = []
-    def check_path(path):
+    
+    def probe(path):
         try:
             full_url = f"{base_url.rstrip('/')}{path}"
+            # verify=False 用于忽略自签名证书，allow_redirects=False 防止误报跳转页面
             r = requests.get(full_url, headers=headers, timeout=3, verify=False, allow_redirects=False)
             if r.status_code == 200:
-                # 简单指纹校验，防止伪 404
-                if any(kw in r.text.lower() for kw in ["[core]", "db_password", "phpinfo", "git"]):
-                    return {"path": path, "status": 200}
+                content = r.text.lower()
+                # 增强判定逻辑：根据文件类型校验关键内容特征
+                is_vuln = False
+                if ".env" in path and ("db_password" in content or "app_key" in content or "database" in content):
+                    is_vuln = True
+                elif ".git" in path and "[core]" in content:
+                    is_vuln = True
+                elif "phpinfo" in path and ("php extension" in content or "system" in content):
+                    is_vuln = True
+                elif ".bak" in path or ".htaccess" in path:
+                    is_vuln = True # 备份文件及配置文件通常 200 即视为风险
+                
+                if is_vuln:
+                    return {"path": path, "status": 200, "evidence": content[:100].replace('\n', ' ')}
             return None
-        except: return None
+        except:
+            return None
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        results = list(executor.map(check_path, SENSITIVE_PATHS))
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(probe, SENSITIVE_PATHS))
         exposed = [r for r in results if r]
+    
     return exposed
 
 def scan_http(target: str, port: int, vhost: str = None):
@@ -54,7 +79,6 @@ def scan_http(target: str, port: int, vhost: str = None):
         response = requests.get(url, headers=headers, timeout=5, allow_redirects=False, verify=False)
         server_banner = response.headers.get('Server', 'Unknown')
         
-        exposed_paths = probe_sensitive_paths(url, headers)
         missing_headers = [sh for sh in SECURITY_HEADERS if sh not in response.headers]
 
         return {
@@ -64,7 +88,6 @@ def scan_http(target: str, port: int, vhost: str = None):
             "headers": dict(response.headers),
             "vhost_matched": vhost if vhost else target,
             "deep_scan": {
-                "exposed_paths": exposed_paths,
                 "missing_headers": missing_headers
             }
         }
