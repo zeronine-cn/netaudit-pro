@@ -71,13 +71,14 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
         target_ports = parse_port_config(request.port_range)
         
-        # Port assignments from config
+        # 适配靶场非标端口
         ssh_ports = parse_port_config(request.ports_config.get('ssh', '22,2222'))
         http_ports = parse_port_config(request.ports_config.get('http', '80,8080'))
         https_ports = parse_port_config(request.ports_config.get('https', '443,8443'))
         dns_ports = parse_port_config(request.ports_config.get('dns', '53,5353'))
+        mysql_ports = parse_port_config(request.ports_config.get('mysql', '3306'))
+        redis_ports = parse_port_config(request.ports_config.get('redis', '6379'))
 
-        # Dictionaries for brute force
         users = [u.strip() for u in request.dictionaries.get('usernames', '').split('\n') if u.strip()]
         passwords = [p.strip() for p in request.dictionaries.get('passwords', '').split('\n') if p.strip()]
         
@@ -92,7 +93,6 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             for future in as_completed(future_to_port):
                 p = future_to_port[future]
                 if future.result(): active_ports.append(p)
-        
         active_ports.sort()
         
         if not active_ports:
@@ -115,58 +115,58 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 update_progress(progress_pct, f"[*] Fingerprinting SSH on {port}...")
                 banner = check_ssh_banner(target_ip, port)
                 service_detail = banner
-                
                 weak_creds = []
                 if request.mode == "深度审计" and request.enable_brute:
                     update_progress(progress_pct, f"[*] Brute-forcing {port}/tcp...")
                     weak_creds = brute_force_ssh(target_ip, port, users, passwords)
-                
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
 
-            # 2. Web (HTTP/HTTPS)
+            # 2. Web
             elif port in http_ports or port in https_ports:
                 proto_name = "HTTPS" if port in https_ports else "HTTP"
                 current_protocol = proto_name
                 update_progress(progress_pct, f"[*] Auditing Web on {port}...")
-                
                 primary_vhost = request.domains[0] if request.domains else None
                 web_res = scan_http(target_ip, port, vhost=primary_vhost)
                 service_detail = web_res.get("banner", "Web Server")
-                
                 tls_res = {}
                 if proto_name == "HTTPS":
                     tls_res = check_tls_vulnerability(target_ip, port, vhost=primary_vhost)
-
-                findings = analyzer.analyze_service(proto_name, port, service_detail, {
-                    "web_results": web_res,
-                    "tls_results": tls_res
-                })
+                findings = analyzer.analyze_service(proto_name, port, service_detail, {"web_results": web_res, "tls_results": tls_res})
 
             # 3. DNS
             elif port in dns_ports:
                 current_protocol = "DNS"
-                update_progress(progress_pct, f"[*] Checking DNS Zone Transfer on {port}...")
+                update_progress(progress_pct, f"[*] Checking DNS on {port}...")
                 dns_res = {}
                 if request.domains:
                     for domain in request.domains:
                         res = check_zone_transfer(domain, target_ip, port)
                         if res.get("vulnerable"):
                             dns_res = res
-                            service_detail = "DNS AXFR Enabled"
+                            service_detail = "AXFR Enabled"
                             break
                         dns_res = res
-                
                 findings = analyzer.analyze_service("DNS", port, service_detail, {"dns_results": dns_res})
 
-            # Add logic for MySQL, Redis, etc. if needed...
+            # 4. DB
+            elif port in mysql_ports:
+                current_protocol = "MySQL"
+                update_progress(progress_pct, f"[*] Probing MySQL on {port}...")
+                db_res = scan_mysql(target_ip, port)
+                findings = analyzer.analyze_service("MySQL", port, db_res.get("banner", "MySQL"), {"db_results": db_res})
+            elif port in redis_ports:
+                current_protocol = "Redis"
+                update_progress(progress_pct, f"[*] Probing Redis on {port}...")
+                db_res = scan_redis(target_ip, port)
+                findings = analyzer.analyze_service("Redis", port, "Redis", {"db_results": db_res})
 
-            # Real-time Log Stream for defects (Nmap-style)
+            # Real-time Log
             for f in findings:
                 if f['risk_level'] == '安全': continue
                 prefix = "[!]" if f['risk_level'] in ['高危', '中危'] else "[-]"
-                log_msg = f"{prefix} {f['check_item']} | {f.get('detail_value', '')}"
-                update_progress(progress_pct, log_msg)
-                time.sleep(0.3) # For visual effect
+                update_progress(progress_pct, f"{prefix} {f['check_item']} | {f.get('detail_value', '')}")
+                time.sleep(0.3)
 
             all_findings.extend(findings)
             port_status_summary.append({"port": port, "protocol": current_protocol, "status": "OPEN", "detail": service_detail})
@@ -188,7 +188,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 @app.post("/api/scan")
 async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
-    task_store[task_id] = {"status": "running", "progress": {"percent": 0, "log": "Engaging Engine..."}}
+    task_store[task_id] = {"status": "running", "progress": {"percent": 0, "log": "Engaging..."}}
     background_tasks.add_task(run_deep_scan, task_id, request)
     return {"task_id": task_id}
 
