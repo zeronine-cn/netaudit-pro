@@ -1,12 +1,11 @@
-
 import socket
 import paramiko
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# 压制 paramiko 日志
-logging.getLogger("paramiko").setLevel(logging.CRITICAL)
+# 配置日志记录，减少 paramiko 的调试输出
+logging.getLogger("paramiko").setLevel(logging.WARNING)
 
 def check_ssh_banner(target: str, port: int):
     """获取 SSH 指纹，用于初步确认服务类型"""
@@ -20,78 +19,46 @@ def check_ssh_banner(target: str, port: int):
 
 def brute_force_ssh(target: str, port: int, usernames: list, passwords: list):
     """
-    SSH 弱口令审计 - 终极兼容版
+    优化后的 SSH 弱口令审计函数：
+    1. 引入线程池并发验证，显著提升大字典扫描速度。
+    2. 保留早停机制，一旦发现有效凭据即刻终止所有线程并返回。
     """
     
+    # 内部登录尝试函数
     def attempt_login(user, pwd):
         user = user.strip()
         pwd = pwd.strip()
-        if not user or not pwd: return None
-        
+        if not user or not pwd:
+            return None
+            
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        
         try:
-            # 关键：显式定义 Transport 并启用所有遗留算法
-            # 某些旧靶场如果客户端不支持 diffie-hellman-group1-sha1 会直接断开
-            t = paramiko.Transport((target, port))
-            
-            # 强制开启某些被现代 Paramiko 禁用的旧算法支持
-            security_options = t.get_security_options()
-            # 尝试不做任何过滤，让 Paramiko 使用其支持的所有算法
-            # 注意：paramiko 2.9+ 默认禁用了一些 sha1 算法，这里不手动设置 security_options 
-            # 而是通过 disabled_algorithms=None 传给 connect，或者直接 try connect
-            
+            # 关键优化：禁用所有不必要的认证方法以加快速度
             client.connect(
                 hostname=target,
                 port=port,
                 username=user,
                 password=pwd,
-                timeout=5,
-                banner_timeout=30, # 增加超时，靶场可能响应慢
-                auth_timeout=10,
+                timeout=5,          # 认证超时
+                banner_timeout=10,  # 响应超时
                 look_for_keys=False,
-                allow_agent=False,
-                # 核心修复：允许所有 host key 算法 (包括 ssh-rsa)
-                disabled_algorithms=None 
+                allow_agent=False
             )
-            
-            client.close()
             return {"user": user, "pass": pwd, "is_compromised": True}
-            
         except paramiko.AuthenticationException:
-            # 认证失败说明连接成功了，只是密码不对
+            return None # 账号密码错误
+        except Exception:
+            return None # 网络层或协议错误
+        finally:
             client.close()
-            return None
-        except paramiko.SSHException as e:
-            # 协议层错误 (如 "No existing session" 或 协商失败)
-            client.close()
-            return None
-        except Exception as e:
-            client.close()
-            return None 
 
-    # 去重
-    unique_users = list(set([u.strip() for u in usernames if u.strip()]))
-    unique_pass = list(set([p.strip() for p in passwords if p.strip()]))
+    # 构建任务列表
+    credentials_to_test = [(u, p) for u in usernames for p in passwords]
     
-    credentials_to_test = []
-    # 优先测试 admin/root 配合 弱口令
-    priority_users = ['root', 'admin']
-    for u in unique_users:
-        if u in priority_users:
-             for p in unique_pass: credentials_to_test.insert(0, (u, p))
-        else:
-             for p in unique_pass: credentials_to_test.append((u, p))
-
-    # 限制总尝试次数，防止死锁
-    credentials_to_test = credentials_to_test[:50] 
-
-    if not credentials_to_test:
-        return []
-
-    # 降低并发数，防止靶场并发限制触发 TCP Reset
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    # 使用线程池加速审计 (建议并发数 5-10，避免被目标防火墙拉黑)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # 提交所有任务
         future_to_cred = {
             executor.submit(attempt_login, u, p): (u, p) 
             for u, p in credentials_to_test
@@ -101,9 +68,11 @@ def brute_force_ssh(target: str, port: int, usernames: list, passwords: list):
             for future in as_completed(future_to_cred):
                 result = future.result()
                 if result:
+                    # 【核心优化：早停机制】
+                    # 发现一个有效凭据后，立即强制取消所有还未开始的任务并关闭线程池
                     executor.shutdown(wait=False, cancel_futures=True)
                     return [result]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"审计过程中出现异常: {str(e)}")
 
-    return []
+    return [] # 未发现弱口令

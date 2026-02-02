@@ -29,7 +29,6 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef({ cancelled: false });
   const hideTimeoutRef = useRef<number | null>(null);
-  const lastLogRef = useRef<string>("");
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -46,8 +45,10 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   };
 
   const handleClearLogs = () => {
-    setLogs([]);
-    localStorage.removeItem('netaudit_logs');
+    if (confirm('是否清空当前所有内核审计日志？')) {
+      setLogs([]);
+      localStorage.removeItem('netaudit_logs');
+    }
   };
 
   const saveToHistory = (ip: string) => {
@@ -82,9 +83,8 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     saveToHistory(draft.target);
     setIsScanning(true);
     setProgress(0);
-    setCurrentAction("Engine Initializing...");
+    setCurrentAction("正在校准审计引擎...");
     abortRef.current.cancelled = false;
-    lastLogRef.current = "";
 
     const domains = draft.domainStr.split(',').map(d => d.trim()).filter(d => d);
     
@@ -96,8 +96,10 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     };
 
     const startTime = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-    addLog(`>>> SESSION STARTED AT ${startTime} <<<`, 'system');
-    addLog(`[*] TARGET: ${draft.target}`, 'info');
+    addLog(`---------------- SESSION START [${startTime}] ----------------`, 'system');
+    addLog(`KERNEL: 初始化审计内核 v3.1...`, 'info');
+    addLog(`ASSET: ${metadata.assetName} | LEVEL: ${metadata.securityLevel}`, 'info');
+    addLog(`TARGET: ${draft.target}`, 'info');
     
     try {
       const report = await performScan(
@@ -112,15 +114,8 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         (pct, log) => {
           setProgress(pct);
           setCurrentAction(log);
-          
-          if (log && log !== lastLogRef.current) {
-             let type: any = 'info';
-             // 根据后端返回的前缀自动判断类型
-             if (log.startsWith('[+]')) type = 'success';
-             if (log.startsWith('[!]')) type = 'error'; // 关键修改：[!] 映射为 Error (红色)
-             if (log.startsWith('[-]')) type = 'warn';  // 关键修改：[-] 映射为 Warn (黄色/白色)
-             addLog(log, type);
-             lastLogRef.current = log;
+          if (pct > 0 && pct % 20 === 0 && pct < 100) {
+            addLog(`[CORE] 审计进度已同步: ${pct}% - ${log}`, 'info');
           }
         },
         abortRef.current,
@@ -128,55 +123,34 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
       );
 
       setProgress(100);
-      setCurrentAction("AUDIT COMPLETE");
-      addLog(`>>> AUDIT FINISHED - REPORT GENERATED <<<`, 'success');
+      setCurrentAction("审计完成");
+      addLog(`NETWORK: 审计作业结束，发现活动向量。`, 'success');
       
       setTimeout(() => {
         onScanComplete(report);
         setIsScanning(false);
       }, 1000);
     } catch (err: any) {
-      addLog(`[!] SYSTEM ERROR: ${err.message}`, 'error');
+      addLog(`ENGINE: ${err.message}`, 'error');
       setIsScanning(false);
       setProgress(0);
       setCurrentAction("");
     }
   };
 
-  // 高亮处理函数：把 IP 和 端口号 高亮显示
-  const formatLogMessage = (msg: string, type: string) => {
-    if (type === 'system') return msg;
-
-    // 移除前缀符号以便更干净的显示
-    const cleanMsg = msg.replace(/^\[(\+|\*|\!|\-)\]\s?/, '');
-
-    // 拆分并高亮关键信息
-    const parts = cleanMsg.split(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}|PORT \d+)/g);
-    
-    return (
-      <span>
-        {/* 前缀图标 */}
-        {msg.startsWith('[+]') && <span className="text-brand font-black mr-2">[+]</span>}
-        {msg.startsWith('[*]') && <span className="text-info font-black mr-2">[*]</span>}
-        {msg.startsWith('[!]') && <span className="text-danger font-black mr-2 animate-pulse">[!]</span>}
-        {msg.startsWith('[-]') && <span className="text-white/40 font-black mr-2">[-]</span>}
-        
-        {parts.map((part, i) => {
-          if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(part)) {
-             return <span key={i} className="text-info font-bold underline decoration-info/30 underline-offset-2">{part}</span>;
-          }
-          if (/^PORT \d+$/.test(part)) {
-             return <span key={i} className="text-brand font-black">{part}</span>;
-          }
-          return <span key={i}>{part}</span>;
-        })}
-      </span>
-    );
+  const getLogColor = (type: string) => {
+    switch(type) {
+      case 'success': return 'text-brand';
+      case 'warn': return 'text-orange-400';
+      case 'error': return 'text-danger animate-pulse font-black';
+      case 'system': return 'text-white/30 border-y border-white/5 py-1 my-2 block w-full text-center tracking-[0.3em]';
+      default: return 'text-white/60';
+    }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch animate-in slide-in-from-bottom-12 duration-1000">
-      {/* 左侧配置面板 */}
+      {/* 左侧配置面板 - 固定高度 */}
       <div className="lg:col-span-5 h-[750px]">
         <div className="tactical-card p-1 bg-gradient-to-br from-white/10 to-transparent rounded-[2.5rem] shadow-2xl h-full">
           <div className="bg-obsidian/95 rounded-[2.4rem] p-8 h-full flex flex-col justify-between overflow-y-auto custom-scrollbar">
@@ -334,7 +308,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         </div>
       </div>
 
-      {/* 右侧日志面板 */}
+      {/* 右侧日志面板 - 固定高度与内部滚动 */}
       <div className="lg:col-span-7 h-[750px]">
         <div className="tactical-card h-full flex flex-col overflow-hidden rounded-[2.5rem] border border-white/10 bg-obsidian/40 shadow-2xl relative">
           {/* Terminal Header */}
@@ -348,8 +322,8 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
              </button>
           </div>
 
-          {/* Log Area */}
-          <div ref={scrollRef} className="p-8 font-mono text-[11px] flex-1 overflow-y-auto bg-black/60 custom-scrollbar scanline-container">
+          {/* Log Area - 核心滚动区 */}
+          <div ref={scrollRef} className="p-8 font-mono text-[10px] flex-1 overflow-y-auto bg-black/60 custom-scrollbar scanline-container">
             {logs.length === 0 && !isScanning && (
               <div className="h-full flex flex-col items-center justify-center space-y-6 opacity-10">
                 <Terminal size={48} strokeWidth={1} className="animate-pulse" />
@@ -357,25 +331,17 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
               </div>
             )}
             
-            <div className="space-y-1.5 pb-10">
+            <div className="space-y-2.5 pb-10">
               {logs.map((log, i) => (
-                <div key={i} className={`flex gap-3 animate-in slide-in-from-left-4 duration-300 ${
-                  log.type === 'success' ? 'text-brand' : 
-                  log.type === 'error' ? 'text-danger' : 
-                  log.type === 'warn' ? 'text-orange-400' : 
-                  log.type === 'system' ? 'text-white/30 border-y border-white/5 py-1 my-2 justify-center tracking-[0.3em] font-black text-[9px]' : 
-                  'text-white/60'
-                }`}>
-                  {log.type !== 'system' && <span className="opacity-10 shrink-0 font-mono select-none">|</span>}
-                  <span className="leading-relaxed flex-1 break-all whitespace-pre-wrap">
-                     {formatLogMessage(log.msg, log.type)}
-                  </span>
+                <div key={i} className={`flex gap-4 animate-in slide-in-from-left-4 duration-300 ${getLogColor(log.type)}`}>
+                  {log.type !== 'system' && <span className="opacity-10 shrink-0 font-black text-[8px] pt-0.5">[{i.toString().padStart(3, '0')}]</span>}
+                  <span className="leading-relaxed flex-1 break-all whitespace-pre-wrap">{log.msg}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* 进度条 */}
+          {/* 进度条 - 固定在终端底部 */}
           {isScanning && (
             <div className="px-8 py-6 bg-brand/[0.02] border-t border-white/5 shrink-0 animate-in slide-in-from-bottom-4">
               <div className="flex justify-between items-center mb-4">

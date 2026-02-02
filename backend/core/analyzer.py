@@ -1,7 +1,6 @@
 
 import json
 import os
-import re
 
 class SecurityAnalyzer:
     def __init__(self, rules_path: str = None):
@@ -17,163 +16,202 @@ class SecurityAnalyzer:
                     return json.load(f)
             except: pass
         return {}
-    
-    def _get_rule_info(self, key, default_desc):
-        rule = self.rules.get(key, {})
-        return {
-            "check_item": rule.get("name", default_desc),
-            "risk_level": rule.get("risk_level", "中危"),
-            "description": rule.get("description", default_desc),
-            "suggestion": rule.get("suggestion", "请检查配置。"),
-            "mlps_clause": f"{rule.get('clause_id', 'Unknown')} - {rule.get('clause_content', '')}"
-        }
 
     def analyze_service(self, protocol: str, port: int, banner: str, extra_data: dict = None):
         findings = []
+        banner_low = banner.lower()
         extra = extra_data or {}
         
-        # --- 1. SSH 协议审计 ---
+        # 1. SSH: 弱口令 & 版本泄露
         if protocol == "SSH":
-            # [测试点: 弱口令检查]
             if extra.get("weak_creds"):
                 creds = extra["weak_creds"][0]
-                rule = self._get_rule_info("SSH_WEAK_PASS", "SSH 弱口令漏洞")
                 findings.append({
                     "id": f"SSH-PWD-{port}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": f"发现有效凭据：{creds['user']} / {creds['pass']}",
-                    "detail_value": f"Authenticated via {creds['user']}:{creds['pass']}",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"],
+                    "check_item": "系统权限已失陷 (SSH 弱口令)", "risk_level": "高危",
+                    "description": f"成功获取系统登录凭据：{creds['user']} / {creds['pass']}",
+                    "detail_value": f"Valid Credential found on port {port}",
+                    "suggestion": "立即修改密码，启用 MFA 认证。", "mlps_clause": "G3-安全计算环境-身份鉴别",
                     "metadata": {"is_compromised": True}
                 })
             
-            # [测试点: Banner 泄露]
-            # 逻辑：如果 banner 包含数字（版本号）且包含软件名
-            if banner and any(char.isdigit() for char in banner) and "SSH" in banner.upper():
-                 rule = self._get_rule_info("SSH_BANNER_LEAK", "SSH 服务版本信息泄露")
-                 findings.append({
+            if "ssh" in banner_low and any(v in banner_low for v in ["ubuntu", "debian", "openssh"]):
+                findings.append({
                     "id": f"SSH-BANNER-{port}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": f"Banner 暴露了详细版本信息: {banner}",
-                    "detail_value": f"Banner: {banner}",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"]
+                    "check_item": "SSH 服务版本信息泄露", "risk_level": "低危",
+                    "description": "SSH 服务端 Banner 暴露了具体的操作系统或软件版本。",
+                    "detail_value": banner,
+                    "suggestion": "修改 sshd_config 设置 DebianBanner no 或使用防火墙限制。",
+                    "mlps_clause": "G3-安全计算环境-入侵防范"
                 })
 
-        # --- 2. Web (HTTP/HTTPS) & TLS 审计 ---
-        elif protocol in ["HTTP", "HTTPS"]:
-            web_res = extra.get("web_results", {})
-            tls_res = extra.get("tls_results", {})
-
-            # [测试点: Web Banner 泄露] (HTTP Server Header)
-            server_header = web_res.get("banner", "")
-            # 逻辑：Server 头不为空，且包含数字（版本号），例如 "nginx/1.14.2"
-            if server_header and any(char.isdigit() for char in server_header) and len(server_header) < 50:
-                 rule = self._get_rule_info("HTTP_BANNER_LEAK", "Web 服务器版本信息泄露")
-                 findings.append({
-                    "id": f"HTTP-BANNER-{port}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": f"HTTP 响应头 Server 字段暴露了版本: {server_header}",
-                    "detail_value": f"Server: {server_header}",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"]
-                })
-
-            # [测试点: 敏感目录暴露]
-            exposed_paths = extra.get("sensitive_paths", [])
-            for item in exposed_paths:
-                rule = self._get_rule_info("WEB_SENSITIVE_EXPOSURE", "Web 敏感文件/目录泄露")
+        # 2. Redis: 未授权访问
+        if protocol == "Redis":
+            res = extra.get("db_results", {})
+            if res.get("vulnerable"):
                 findings.append({
-                    "id": f"WEB-FILE-{port}-{item['path']}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": f"探测到敏感路径 {item['path']} 可直接访问。",
-                    "detail_value": f"Path: {item['path']} | Evidence: {item.get('evidence', '')[:50]}...",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"]
+                    "id": f"REDIS-UNAUTH-{port}", "protocol": protocol,
+                    "check_item": "数据库未授权访问 (匿名登录)", "risk_level": "高危",
+                    "description": "Redis 服务器未启用密码认证，攻击者可远程执行任意指令并提取数据。",
+                    "detail_value": res.get("detail", ""),
+                    "suggestion": "1. 修改 redis.conf 启用 requirepass；2. 限制 bind 127.0.0.1。",
+                    "mlps_clause": "G3-安全计算环境-身份鉴别",
+                    "metadata": {"is_compromised": True, "db_type": "Redis"}
                 })
-
-            # HTTPS 专属测试点
-            if protocol == "HTTPS":
-                # [测试点: 协议版本审计] (TLS 1.0/1.1)
-                if tls_res.get("weak_protocols"):
-                    rule = self._get_rule_info("TLS_OLD_PROTO", "使用了不安全的加密协议")
-                    findings.append({
-                        "id": f"TLS-OLD-{port}", "protocol": "HTTPS",
-                        "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                        "description": f"服务器支持已弃用的协议: {', '.join(tls_res['weak_protocols'])}",
-                        "detail_value": str(tls_res['weak_protocols']),
-                        "suggestion": rule["suggestion"], 
-                        "mlps_clause": rule["mlps_clause"]
-                    })
-                
-                # [测试点: 弱加密套件] (RC4)
-                if tls_res.get("weak_ciphers"):
-                    rule = self._get_rule_info("TLS_WEAK_CIPHER", "启用了弱加密套件")
-                    findings.append({
-                        "id": f"TLS-WEAK-CIPHER-{port}", "protocol": "HTTPS",
-                        "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                        "description": "检测到服务器允许 RC4 或 DES 等弱加密算法。",
-                        "detail_value": f"Weak Ciphers: {tls_res['weak_ciphers']}",
-                        "suggestion": rule["suggestion"], 
-                        "mlps_clause": rule["mlps_clause"]
-                    })
-
-                cert_info = tls_res.get("cert_info")
-                if cert_info:
-                    # [测试点: 证书有效期]
-                    if cert_info.get("is_expired"):
-                        rule = self._get_rule_info("CERT_EXPIRED", "数字证书已过期")
-                        findings.append({
-                            "id": f"TLS-EXP-{port}", "protocol": "HTTPS",
-                            "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                            "description": f"证书已于 {cert_info.get('expiry')} 过期。",
-                            "detail_value": f"Expired Date: {cert_info.get('expiry')}",
-                            "suggestion": rule["suggestion"], 
-                            "mlps_clause": rule["mlps_clause"]
-                        })
-                    
-                    # [测试点: 密钥强度审计] (< 2048 bit)
-                    key_size = cert_info.get("key_size", 2048)
-                    if key_size < 2048:
-                        rule = self._get_rule_info("TLS_WEAK_KEY", "数字证书密钥强度不足")
-                        findings.append({
-                            "id": f"TLS-WEAK-KEY-{port}", "protocol": "HTTPS",
-                            "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                            "description": f"证书 RSA 密钥长度为 {key_size} 位，低于等保要求的 2048 位。",
-                            "detail_value": f"Key Size: {key_size} bits",
-                            "suggestion": rule["suggestion"], 
-                            "mlps_clause": rule["mlps_clause"]
-                        })
-
-        # --- 3. DNS 审计 ---
-        elif protocol == "DNS":
-            # [测试点: 区域传送]
-            dns_res = extra.get("dns_results", {})
-            if dns_res.get("vulnerable"):
-                rule = self._get_rule_info("DNS_ZONE_TRANSFER", "DNS 区域传送漏洞 (AXFR)")
+            else:
                 findings.append({
-                    "id": f"DNS-AXFR-{port}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": rule["description"],
-                    "detail_value": f"Leaked Records: {dns_res.get('records_count')}",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"]
+                    "id": f"REDIS-AUTH-{port}", "protocol": protocol,
+                    "check_item": "Redis 服务探测", "risk_level": "安全",
+                    "description": "检测到 Redis 服务已启用身份验证。",
+                    "detail_value": "Auth Required.", "suggestion": "保持现状。", "mlps_clause": "G3-安全计算环境-身份鉴别"
                 })
 
-        # --- 4. TCP/数据库 端口暴露 ---
-        if protocol in ["MySQL", "Redis", "PostgreSQL", "MongoDB"]:
-            db_res = extra.get("db_results", {})
-            if db_res.get("status") == "OPEN":
-                rule = self._get_rule_info("DB_OPEN", "数据库服务对外暴露")
+        # 3. 数据库通用 (MySQL/PG/Mongo): 服务暴露
+        if protocol in ["MySQL", "PostgreSQL", "MongoDB"]:
+            res = extra.get("db_results", {})
+            if res.get("status") == "OPEN":
                 findings.append({
                     "id": f"DB-OPEN-{port}", "protocol": protocol,
-                    "check_item": rule["check_item"], "risk_level": rule["risk_level"],
-                    "description": f"检测到 {protocol} 端口处于开放状态。",
-                    "detail_value": f"Port {port} is OPEN",
-                    "suggestion": rule["suggestion"], 
-                    "mlps_clause": rule["mlps_clause"]
+                    "check_item": f"{protocol} 服务暴露", "risk_level": "中危",
+                    "description": f"发现 {protocol} 数据库服务端口对公网开放，增加了攻击面。",
+                    "detail_value": res.get("banner", "Active"),
+                    "suggestion": "1. 检查是否存在弱口令；2. 仅允许受信 IP 访问该端口。",
+                    "mlps_clause": "G3-安全计算环境-入侵防范"
                 })
+
+        # 4. Web 协议 (HTTP/HTTPS): 综合分析
+        if protocol in ["HTTP", "HTTPS"]:
+            web_res = extra.get("web_results", {})
+            tls_res = extra.get("tls_results", {})
+            verified_vhosts = extra.get("verified_vhosts", [])
+
+            # 4.1 虚拟主机发现 (VHost)
+            if verified_vhosts:
+                findings.append({
+                    "id": f"WEB-VHOST-{port}", "protocol": protocol,
+                    "check_item": "虚拟主机 (VHost) 碰撞成功", "risk_level": "中危",
+                    "description": f"发现隐藏的虚拟主机域名: {', '.join(verified_vhosts)}",
+                    "detail_value": str(verified_vhosts),
+                    "suggestion": "确保内部测试域名不解析到公网，检查 Nginx/Apache 的 server_name 配置。",
+                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                })
+
+            # 4.2 敏感目录泄露
+            if web_res.get("deep_scan", {}).get("exposed_paths"):
+                for path_obj in web_res["deep_scan"]["exposed_paths"]:
+                    findings.append({
+                        "id": f"WEB-DIR-{port}-{path_obj['path']}", "protocol": protocol,
+                        "check_item": "Web 敏感文件/目录泄露", "risk_level": "高危",
+                        "description": f"探测到敏感路径 {path_obj['path']} 可直接访问 (Status: {path_obj['status']})。",
+                        "detail_value": f"Path: {path_obj['path']}",
+                        "suggestion": "立即删除生产环境中的敏感文件或在 Web 服务器配置中禁止访问。",
+                        "mlps_clause": "G3-安全计算环境-入侵防范"
+                    })
+
+            # 4.3 版本泄露
+            server_header = web_res.get("banner", "")
+            if len(server_header) > 2 and server_header != "Unknown":
+                 findings.append({
+                    "id": f"WEB-BANNER-{port}", "protocol": protocol,
+                    "check_item": "Web 服务器版本信息泄露", "risk_level": "中危",
+                    "description": f"HTTP 响应头 Server 字段泄露了具体软件版本：{server_header}",
+                    "detail_value": server_header,
+                    "suggestion": "配置 Nginx (server_tokens off) 或 Apache (ServerTokens Prod) 隐藏版本。",
+                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                })
+
+            # 4.4 安全头缺失
+            missing = web_res.get("deep_scan", {}).get("missing_headers", [])
+            if missing:
+                findings.append({
+                    "id": f"WEB-HEADER-{port}", "protocol": protocol,
+                    "check_item": "Web 安全防护响应头缺失", "risk_level": "低危",
+                    "description": f"缺失关键安全头: {', '.join(missing[:3])} 等。",
+                    "detail_value": f"Missing: {', '.join(missing)}",
+                    "suggestion": "配置 Web 服务器添加 X-Frame-Options, CSP 等安全头。",
+                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                })
+
+            # 4.5 TLS 漏洞 (HTTPS Only)
+            if protocol == "HTTPS":
+                weak_protos = tls_res.get("weak_protocols", [])
+                if weak_protos:
+                    findings.append({
+                        "id": f"TLS-OLD-{port}", "protocol": "HTTPS",
+                        "check_item": "使用了不安全的加密协议", "risk_level": "高危",
+                        "description": f"服务器启用了已弃用的老旧协议: {', '.join(weak_protos)}。",
+                        "detail_value": str(weak_protos),
+                        "suggestion": "禁用 TLSv1.0/1.1，仅启用 TLSv1.2 及以上版本。",
+                        "mlps_clause": "G3-安全通信网络-通信保密性"
+                    })
+                
+                cert_vulns = tls_res.get("vulnerabilities", [])
+                if "CERT_EXPIRED" in cert_vulns:
+                    findings.append({
+                        "id": f"TLS-EXP-{port}", "protocol": "HTTPS",
+                        "check_item": "SSL/TLS 证书已过期", "risk_level": "高危",
+                        "description": "服务器使用的数字证书已过期，无法保证通信可信度。",
+                        "detail_value": f"Expired: {tls_res.get('cert_info', {}).get('expiry')}",
+                        "suggestion": "立即更换有效的数字证书。",
+                        "mlps_clause": "G3-安全通信网络-通信保密性"
+                    })
+
+        # 5. DNS 漏洞分析
+        if protocol == "DNS":
+            res = extra.get("dns_results", {})
+            if res.get("vulnerable"):
+                findings.append({
+                    "id": f"DNS-AXFR-{port}", "protocol": protocol,
+                    "check_item": "DNS 区域传送漏洞", "risk_level": "高危",
+                    "description": f"DNS 服务器允许非授权的区域传送 (AXFR)，导致 {res.get('records_count', 0)} 条解析记录泄露。",
+                    "detail_value": "\n".join(res.get("records", [])),
+                    "suggestion": "在 Bind 配置中限制 'allow-transfer' 仅允许从 DNS 服务器 (Slave DNS) IP 访问。",
+                    "mlps_clause": "G3-安全区域边界-边界防护"
+                })
+            else:
+                 findings.append({
+                    "id": f"DNS-OPEN-{port}", "protocol": protocol,
+                    "check_item": "DNS 服务开放", "risk_level": "低危",
+                    "description": "检测到 DNS (53) 端口开放，未发现区域传送风险。",
+                    "detail_value": res.get("detail", "No Transfer"),
+                    "suggestion": "确保仅对内网开放或已配置 ACL 访问控制。",
+                    "mlps_clause": "G3-安全区域边界-访问控制"
+                })
+
+        # --- 新增逻辑：高危/非必要端口判定 ---
+        # 定义高危/不建议开放的端口列表
+        RISKY_PORTS = {
+            21: {"name": "FTP", "desc": "明文传输协议，建议使用 SFTP", "risk": "中危"},
+            23: {"name": "Telnet", "desc": "明文传输协议，完全不安全，建议使用 SSH", "risk": "高危"},
+            135: {"name": "RPC", "desc": "易受攻击，严禁对公网开放", "risk": "高危"},
+            139: {"name": "NetBIOS", "desc": "易泄露内网信息，严禁对公网开放", "risk": "高危"},
+            445: {"name": "SMB", "desc": "存在永恒之蓝等高危漏洞，严禁对公网开放", "risk": "高危"},
+            3389: {"name": "RDP", "desc": "远程桌面服务，易受勒索病毒攻击，建议仅对 VPN 开放", "risk": "高危"},
+            5900: {"name": "VNC", "desc": "远程控制服务，建议设置强密码或限制访问 IP", "risk": "中危"},
+            11211: {"name": "Memcached", "desc": "可能存在未授权访问漏洞", "risk": "中危"},
+            27017: {"name": "MongoDB", "desc": "NoSQL 数据库，默认配置可能存在未授权访问", "risk": "中危"}
+        }
+
+        if port in RISKY_PORTS:
+            info = RISKY_PORTS[port]
+            findings.append({
+                "id": f"RISKY-PORT-{port}", 
+                "protocol": "TCP",
+                "check_item": "高危/非必要端口开放", 
+                "risk_level": info["risk"],
+                "description": f"检测到高危端口 {port} ({info['name']}) 处于开放状态。",
+                "detail_value": f"Port {port} ({info['name']}) is OPEN. {info['desc']}",
+                "suggestion": f"该端口属于高风险服务，请立即关闭或通过防火墙限制仅允许特定 IP 访问。",
+                "mlps_clause": "G3-安全区域边界-访问控制" 
+            })
+
+        # 6. 兜底
+        if not findings:
+            findings.append({
+                "id": f"PORT-{port}", "protocol": protocol, "check_item": "常规端口开放", 
+                "risk_level": "安全", "description": f"检测到 {protocol} 端口处于活动状态。",
+                "detail_value": f"Port: {port}, Banner: {banner[:50]}", "suggestion": "核查业务必要性，遵循最小权限原则。", "mlps_clause": "G3-安全区域边界-访问控制"
+            })
 
         return findings
 
