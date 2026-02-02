@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ScanReport, RiskLevel, Protocol, AppConfig } from '../types';
-import { AlertTriangle, ChevronDown, ChevronRight, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon, Terminal, LayoutList } from 'lucide-react';
 import { generateAIAdvice } from '../services/aiService';
 
 interface ResultsViewProps {
@@ -10,6 +10,7 @@ interface ResultsViewProps {
 }
 
 const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
+  const [viewMode, setViewMode] = useState<'GUI' | 'CLI'>('GUI'); // 新增视图模式切换
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [aiResult, setAiResult] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -64,17 +65,6 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
               请下发“审计任务”指令以同步资产快照
             </p>
           </div>
-          
-          <div className="mt-16 flex gap-6 items-center">
-             <div className="flex items-center gap-3 px-5 py-2.5 bg-black/40 rounded-xl border border-white/5 opacity-50">
-                <Activity size={14} className="text-brand" />
-                <span className="text-[9px] font-black uppercase tracking-widest text-white/60">内核版本: 3.1-STABLE</span>
-             </div>
-             <div className="flex items-center gap-3 px-5 py-2.5 bg-black/40 rounded-xl border border-white/5 opacity-50">
-                <Database size={14} className="text-info" />
-                <span className="text-[9px] font-black uppercase tracking-widest text-white/60">持久化存储: 就绪</span>
-             </div>
-          </div>
         </div>
       </div>
     </div>
@@ -85,12 +75,6 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
     const advice = await generateAIAdvice(report, config.aiConfig);
     setAiResult(advice);
     setIsAiLoading(false);
-  };
-
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
   };
 
   const getRiskStyle = (level: RiskLevel, isCompromised: boolean) => {
@@ -113,6 +97,89 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
     }
   };
 
+  // --- CLI 模式渲染组件 ---
+  const renderCliView = () => {
+    const lines: React.ReactElement[] = [];
+    
+    // Header
+    lines.push(
+      <div key="header" className="pb-4 border-b border-white/10 mb-4">
+         <div className="text-info font-bold">[+] TARGET: <span className="text-white underline">{report.target}</span></div>
+         <div className="text-info font-bold">[+] TIME: <span className="text-white">{report.timestamp}</span></div>
+         <div className="text-info font-bold">[+] SCORE: <span className={`${report.score < 60 ? 'text-danger' : 'text-brand'}`}>{report.score}</span></div>
+         <div className="text-white/50 mt-2">[*] Starting Vulnerability Scan (Deep Audit Mode)...</div>
+      </div>
+    );
+
+    // Group defects by port
+    const defectsByPort: Record<string, any[]> = {};
+    report.defects.forEach(d => {
+        // 尝试从 ID 中提取端口，例如 "TLS-OLD-8443"
+        const parts = d.id.split('-');
+        const port = parts[parts.length - 1];
+        if (port && !isNaN(Number(port))) {
+            if (!defectsByPort[port]) defectsByPort[port] = [];
+            defectsByPort[port].push(d);
+        } else {
+            if (!defectsByPort['GLOBAL']) defectsByPort['GLOBAL'] = [];
+            defectsByPort['GLOBAL'].push(d);
+        }
+    });
+
+    // Iterate Ports
+    report.port_statuses.forEach(p => {
+        lines.push(
+            <div key={`port-${p.port}`} className="mt-4">
+                <div className="flex items-center gap-2">
+                    <span className="text-brand font-black text-sm">[+]</span>
+                    <span className="text-brand font-bold text-sm">{p.port}/{p.protocol.toLowerCase()} OPEN</span>
+                    <span className="text-white/50 text-xs">| Service: {p.detail}</span>
+                </div>
+                
+                {/* 端口相关的漏洞 */}
+                {defectsByPort[String(p.port)]?.map((d, idx) => (
+                    <div key={d.id} className="ml-4 mt-1 border-l border-white/10 pl-3">
+                        <div className="flex items-start gap-2">
+                            <span className={`font-black text-xs mt-0.5 ${d.risk_level === '高危' ? 'text-danger' : d.risk_level === '中危' ? 'text-orange-500' : 'text-info'}`}>
+                                [!] {d.check_item}
+                            </span>
+                            {d.metadata?.is_compromised && <span className="bg-danger text-white text-[9px] px-1 rounded animate-pulse">PWNED</span>}
+                        </div>
+                        <div className="text-white/60 text-[11px] font-mono break-all ml-6">
+                           Details: {d.detail_value || d.description}
+                        </div>
+                        <div className="text-white/30 text-[10px] ml-6 italic">
+                           Fix: {d.suggestion.substring(0, 60)}...
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    });
+
+    // Global Defects
+    if (defectsByPort['GLOBAL']?.length > 0) {
+        lines.push(<div key="global-header" className="mt-6 text-brand font-bold">[+] GLOBAL / NON-PORT SPECIFIC FINDINGS</div>);
+        defectsByPort['GLOBAL'].forEach(d => {
+             lines.push(
+                <div key={d.id} className="ml-4 mt-2">
+                    <div className="text-danger font-bold">[!] {d.check_item}</div>
+                    <div className="text-white/60 text-xs ml-6">{d.detail_value}</div>
+                </div>
+             )
+        });
+    }
+    
+    lines.push(<div key="footer" className="mt-8 text-brand font-bold animate-pulse">&gt;&gt;&gt; AUDIT FINISHED - REPORT GENERATED &lt;&lt;&lt;</div>);
+
+    return (
+        <div className="bg-black p-8 rounded-2xl font-mono text-xs leading-relaxed overflow-x-auto border border-white/10 shadow-2xl relative">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand to-transparent"></div>
+            {lines}
+        </div>
+    );
+  };
+
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-6 duration-700">
       <div className="flex justify-between items-end border-b border-white/10 pb-6">
@@ -121,6 +188,24 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
           <p className="font-bold text-brand mt-2 uppercase tracking-widest text-sm">资产：{report.target} | 发现 {report.defects.length} 处漏洞点</p>
         </div>
         <div className="flex gap-4">
+           {/* 视图切换按钮 */}
+           <div className="bg-white/5 p-1 rounded-xl border border-white/10 flex">
+              <button 
+                onClick={() => setViewMode('GUI')}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${viewMode === 'GUI' ? 'bg-brand text-black font-bold shadow-lg' : 'text-white/40 hover:text-white'}`}
+              >
+                <LayoutList size={14} />
+                <span className="text-[10px] font-black uppercase">卡片视图</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('CLI')}
+                className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${viewMode === 'CLI' ? 'bg-black border border-brand/50 text-brand font-bold shadow-lg' : 'text-white/40 hover:text-white'}`}
+              >
+                <Terminal size={14} />
+                <span className="text-[10px] font-black uppercase">终端模式</span>
+              </button>
+           </div>
+
           <button 
             onClick={handleAiAnalysis}
             disabled={isAiLoading}
@@ -148,86 +233,89 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
         </div>
       )}
 
-      <div className="space-y-6">
-        {report.defects.map((defect: any) => {
-          const isCompromised = defect.id.includes('SSH-PWD') || (defect.protocol === Protocol.SSH && defect.risk_level === RiskLevel.HIGH);
-          
-          return (
-            <div key={defect.id} className={`tactical-card overflow-hidden rounded-3xl border transition-all ${isCompromised ? 'border-danger/50 bg-danger/5' : 'border-white/5'}`}>
-              <div 
-                className={`p-6 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all ${expandedId === defect.id ? 'bg-white/5 border-b border-white/10' : ''}`}
-                onClick={() => setExpandedId(expandedId === defect.id ? null : defect.id)}
-              >
-                <div className="flex items-center gap-8">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ${getRiskStyle(defect.risk_level, isCompromised)}`}>
-                    {isCompromised ? <Skull size={30} /> : <AlertTriangle size={30} />}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-4 mb-2">
-                      <span className="bg-white/10 text-white/60 px-3 py-1 text-[10px] font-black flex items-center gap-2 uppercase rounded-md">
-                        {getProtocolIcon(defect.protocol)}
-                        {defect.protocol}
-                      </span>
-                      {defect.domain && (
-                         <span className="bg-brand/10 text-brand px-3 py-1 text-[10px] font-black flex items-center gap-2 uppercase rounded-md border border-brand/20">
-                           <Target size={12} />
-                           {defect.domain}
-                         </span>
-                      )}
-                      {isCompromised && (
-                         <span className="bg-danger text-white px-2 py-0.5 text-[8px] font-black uppercase rounded animate-shake">CRITICAL SYSTEM BREACH</span>
-                      )}
-                      <h3 className={`font-black text-xl italic ${isCompromised ? 'text-danger' : ''}`}>{defect.check_item}</h3>
+      {/* 视图内容切换 */}
+      {viewMode === 'CLI' ? renderCliView() : (
+        <div className="space-y-6">
+          {report.defects.map((defect: any) => {
+            const isCompromised = defect.id.includes('SSH-PWD') || (defect.protocol === Protocol.SSH && defect.risk_level === RiskLevel.HIGH);
+            
+            return (
+              <div key={defect.id} className={`tactical-card overflow-hidden rounded-3xl border transition-all ${isCompromised ? 'border-danger/50 bg-danger/5' : 'border-white/5'}`}>
+                <div 
+                  className={`p-6 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all ${expandedId === defect.id ? 'bg-white/5 border-b border-white/10' : ''}`}
+                  onClick={() => setExpandedId(expandedId === defect.id ? null : defect.id)}
+                >
+                  <div className="flex items-center gap-8">
+                    <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 shadow-lg ${getRiskStyle(defect.risk_level, isCompromised)}`}>
+                      {isCompromised ? <Skull size={30} /> : <AlertTriangle size={30} />}
                     </div>
-                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest">{defect.description}</p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-10">
-                  <span className={`px-4 py-1.5 text-xs font-black rounded-lg uppercase shadow-sm ${getRiskStyle(defect.risk_level, isCompromised)}`}>
-                    {isCompromised ? '凭据失陷' : defect.risk_level}
-                  </span>
-                  {expandedId === defect.id ? <ChevronDown className="text-white/20" size={28} /> : <ChevronRight className="text-white/20" size={28} />}
-                </div>
-              </div>
-
-              {expandedId === defect.id && (
-                <div className="p-10 grid grid-cols-1 md:grid-cols-2 gap-10 bg-black/20">
-                  <div>
-                    <div className="flex justify-between items-center mb-4">
-                      <h4 className="font-black text-[10px] uppercase tracking-widest text-brand bg-brand/10 inline-block px-3 py-1 rounded-md">
-                        审计取证数据 (Evidence)
-                      </h4>
-                    </div>
-                    <div className={`p-6 rounded-2xl font-mono text-sm leading-relaxed border ${isCompromised ? 'bg-danger/20 border-danger/40 text-white' : 'bg-white/5 border-white/5 text-brand/80'}`}>
-                      {defect.detail_value}
-                    </div>
-                    
-                    <h4 className="font-black text-[10px] uppercase tracking-widest mt-10 mb-4 text-emerald-400 bg-emerald-400/10 inline-block px-3 py-1 rounded-md">战术加固方案</h4>
-                    <div className="bg-white/5 border border-white/5 p-6 rounded-2xl font-bold text-sm text-white/70 leading-relaxed italic">
-                      {defect.suggestion}
+                    <div>
+                      <div className="flex items-center gap-4 mb-2">
+                        <span className="bg-white/10 text-white/60 px-3 py-1 text-[10px] font-black flex items-center gap-2 uppercase rounded-md">
+                          {getProtocolIcon(defect.protocol)}
+                          {defect.protocol}
+                        </span>
+                        {defect.domain && (
+                           <span className="bg-brand/10 text-brand px-3 py-1 text-[10px] font-black flex items-center gap-2 uppercase rounded-md border border-brand/20">
+                             <Target size={12} />
+                             {defect.domain}
+                           </span>
+                        )}
+                        {isCompromised && (
+                           <span className="bg-danger text-white px-2 py-0.5 text-[8px] font-black uppercase rounded animate-shake">CRITICAL SYSTEM BREACH</span>
+                        )}
+                        <h3 className={`font-black text-xl italic ${isCompromised ? 'text-danger' : ''}`}>{defect.check_item}</h3>
+                      </div>
+                      <p className="text-xs font-bold text-white/40 uppercase tracking-widest">{defect.description}</p>
                     </div>
                   </div>
                   
-                  <div className="bg-brand/5 border border-brand/10 p-8 rounded-3xl relative overflow-hidden">
-                    <h4 className="font-black text-[10px] uppercase tracking-widest mb-6 border-b border-brand/20 pb-4">合规准则审计对照 (MLPS)</h4>
-                    <div className="space-y-6">
-                      <div>
-                        <p className="text-[10px] font-black uppercase text-brand/40 mb-2">标准控制域标识</p>
-                        <p className="font-black text-lg leading-tight text-white/90">{defect.mlps_clause}</p>
+                  <div className="flex items-center gap-10">
+                    <span className={`px-4 py-1.5 text-xs font-black rounded-lg uppercase shadow-sm ${getRiskStyle(defect.risk_level, isCompromised)}`}>
+                      {isCompromised ? '凭据失陷' : defect.risk_level}
+                    </span>
+                    {expandedId === defect.id ? <ChevronDown className="text-white/20" size={28} /> : <ChevronRight className="text-white/20" size={28} />}
+                  </div>
+                </div>
+
+                {expandedId === defect.id && (
+                  <div className="p-10 grid grid-cols-1 md:grid-cols-2 gap-10 bg-black/20">
+                    <div>
+                      <div className="flex justify-between items-center mb-4">
+                        <h4 className="font-black text-[10px] uppercase tracking-widest text-brand bg-brand/10 inline-block px-3 py-1 rounded-md">
+                          审计取证数据 (Evidence)
+                        </h4>
                       </div>
-                      <div className="mt-4 p-4 bg-white/5 border border-white/10 rounded-xl">
-                         <p className="text-[10px] font-black text-white/40 uppercase mb-1">审计来源标识</p>
-                         <p className="text-[10px] text-white/60 italic">该项基于资产 {report.target} {defect.domain ? `及域名 ${defect.domain} ` : ''}的深度指纹匹配算法产出。</p>
+                      <div className={`p-6 rounded-2xl font-mono text-sm leading-relaxed border ${isCompromised ? 'bg-danger/20 border-danger/40 text-white' : 'bg-white/5 border-white/5 text-brand/80'}`}>
+                        {defect.detail_value}
+                      </div>
+                      
+                      <h4 className="font-black text-[10px] uppercase tracking-widest mt-10 mb-4 text-emerald-400 bg-emerald-400/10 inline-block px-3 py-1 rounded-md">战术加固方案</h4>
+                      <div className="bg-white/5 border border-white/5 p-6 rounded-2xl font-bold text-sm text-white/70 leading-relaxed italic">
+                        {defect.suggestion}
+                      </div>
+                    </div>
+                    
+                    <div className="bg-brand/5 border border-brand/10 p-8 rounded-3xl relative overflow-hidden">
+                      <h4 className="font-black text-[10px] uppercase tracking-widest mb-6 border-b border-brand/20 pb-4">合规准则审计对照 (MLPS)</h4>
+                      <div className="space-y-6">
+                        <div>
+                          <p className="text-[10px] font-black uppercase text-brand/40 mb-2">标准控制域标识</p>
+                          <p className="font-black text-lg leading-tight text-white/90">{defect.mlps_clause}</p>
+                        </div>
+                        <div className="mt-4 p-4 bg-white/5 border border-white/10 rounded-xl">
+                           <p className="text-[10px] font-black text-white/40 uppercase mb-1">审计来源标识</p>
+                           <p className="text-[10px] text-white/60 italic">该项基于资产 {report.target} {defect.domain ? `及域名 ${defect.domain} ` : ''}的深度指纹匹配算法产出。</p>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

@@ -8,6 +8,8 @@ import time
 import socket
 import json
 import uuid
+import os
+import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Imports
@@ -20,6 +22,12 @@ from scanners.dns_scan import check_zone_transfer
 app = FastAPI(title="NetAudit 审计引擎 V3.2")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# --- 持久化配置 ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 确保数据目录存在，映射到 Docker volume
+HISTORY_DIR = os.path.join(BASE_DIR, "data", "history")
+os.makedirs(HISTORY_DIR, exist_ok=True)
 
 analyzer = SecurityAnalyzer()
 task_store: Dict[str, Any] = {}
@@ -47,6 +55,21 @@ def probe_port(ip: str, port: int) -> bool:
         with socket.create_connection((ip, port), timeout=0.5) as s:
             return True
     except: return False
+
+def save_report_to_disk(report: dict):
+    """将审计报告持久化到磁盘"""
+    try:
+        # 使用毫秒时间戳作为 ID
+        report_id = int(time.time() * 1000)
+        report['id'] = report_id
+        
+        file_path = os.path.join(HISTORY_DIR, f"{report_id}.json")
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        return report_id
+    except Exception as e:
+        print(f"Failed to save report: {e}")
+        return None
 
 def run_deep_scan(task_id: str, request: ScanRequest):
     try:
@@ -142,7 +165,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             for f in findings:
                 if f['risk_level'] != '安全':
                     update_progress(progress_pct, f"[!] Found: {f['check_item']}")
-                    time.sleep(0.2)
+                    time.sleep(0.1)
 
             all_findings.extend(findings)
             port_status_summary.append({"port": port, "protocol": current_protocol, "status": "OPEN", "detail": service_detail})
@@ -155,8 +178,14 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 "high": len([d for d in all_findings if d["risk_level"] == "高危"]),
                 "medium": len([d for d in all_findings if d["risk_level"] == "中危"]),
                 "low": len([d for d in all_findings if d["risk_level"] == "低危"])
-            }
+            },
+            # 关键修复：透传元数据以便历史记录显示资产名称
+            "metadata": request.metadata
         }
+        
+        # 保存到历史记录
+        save_report_to_disk(report)
+        
         task_store[task_id] = {"status": "completed", "result": report, "progress": {"percent": 100, "log": "Audit Finished"}}
     except Exception as e:
         task_store[task_id] = {"status": "failed", "error": str(e)}
@@ -171,6 +200,47 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
 @app.get("/api/scan/status/{task_id}")
 async def get_status(task_id: str):
     return task_store.get(task_id, {"status": "not_found"})
+
+# --- 历史记录管理 API ---
+
+@app.get("/api/history")
+async def get_history():
+    """获取所有历史审计报告"""
+    reports = []
+    # 按修改时间倒序读取
+    files = glob.glob(os.path.join(HISTORY_DIR, "*.json"))
+    files.sort(key=os.path.getmtime, reverse=True)
+    
+    for f in files:
+        try:
+            with open(f, 'r', encoding='utf-8') as fd:
+                reports.append(json.load(fd))
+        except: pass
+    return reports
+
+@app.delete("/api/history/purge")
+async def purge_history():
+    """清空所有历史记录"""
+    files = glob.glob(os.path.join(HISTORY_DIR, "*.json"))
+    count = 0
+    for f in files:
+        try:
+            os.remove(f)
+            count += 1
+        except: pass
+    return {"status": "success", "deleted": count}
+
+@app.delete("/api/history/{report_id}")
+async def delete_history_item(report_id: int):
+    """删除指定 ID 的报告"""
+    file_path = os.path.join(HISTORY_DIR, f"{report_id}.json")
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            return {"status": "success"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=404, detail="Report not found")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

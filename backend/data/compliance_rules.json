@@ -5,7 +5,7 @@
     "risk_level": "高危",
     "clause_id": "G3-安全通信网络-通信保密性",
     "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
-    "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在已知加密弱点。",
+    "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在 BEAST、POODLE 等已知漏洞。",
     "suggestion": "请在 Web 服务器 (Nginx/Apache) 配置中禁用 TLSv1.0/1.1，仅启用 TLSv1.2 和 TLSv1.3。"
   },
   "TLS_WEAK_KEY": {
@@ -13,7 +13,7 @@
     "risk_level": "高危",
     "clause_id": "G3-安全通信网络-通信保密性",
     "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
-    "description": "检测到证书公钥长度小于 2048 位，不符合现代安全强度及等保基线要求，易受算力攻击破解。",
+    "description": "检测到证书 RSA 公钥长度小于 2048 位（当前检测值不足），不符合现代安全强度及等保基线要求。",
     "suggestion": "请重新生成使用 2048 位或更高强度 RSA 密钥的数字证书，并更新至 Web 服务。"
   },
   "TLS_WEAK_CIPHER": {
@@ -29,16 +29,24 @@
     "risk_level": "高危",
     "clause_id": "G3-安全通信网络-通信保密性",
     "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
-    "description": "服务器使用的 SSL/TLS 证书已超过有效期，无法验证服务器身份，且可能导致通信被截获。",
+    "description": "服务器使用的 SSL/TLS 证书已超过有效期，无法验证服务器身份。",
     "suggestion": "请立即申请并更换新的有效证书。"
   },
   "HTTP_BANNER_LEAK": {
     "name": "Web 服务器版本信息泄露",
-    "risk_level": "中危",
+    "risk_level": "低危",
     "clause_id": "G3-安全计算环境-入侵防范",
     "clause_content": "应隐藏不必要的系统信息。",
-    "description": "HTTP 响应头暴露了 Nginx/Apache 的具体版本号，攻击者可据此查找针对性漏洞。",
+    "description": "HTTP 响应头 (Server 字段) 暴露了 Nginx/Apache 的具体版本号，攻击者可据此查找针对性漏洞。",
     "suggestion": "修改 Nginx 配置 'server_tokens off;' 或 Apache 'ServerTokens Prod'。"
+  },
+  "SSH_BANNER_LEAK": {
+    "name": "SSH 服务版本信息泄露",
+    "risk_level": "低危",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应隐藏不必要的系统信息。",
+    "description": "SSH 服务 Banner 暴露了具体的软件名称和版本号（如 OpenSSH_7.4），易被攻击者利用。",
+    "suggestion": "建议在 SSH 配置文件中配置 Banner 混淆或升级到最新安全版本。"
   },
   "WEB_SENSITIVE_EXPOSURE": {
     "name": "Web 敏感目录或文件暴露",
@@ -76,7 +84,7 @@
     "name": "DNS 区域传送漏洞 (AXFR)",
     "risk_level": "高危",
     "clause_id": "G3-安全区域边界-边界防护",
-    "clause_content": "应关闭不需要的系统服务 and 高危端口。",
+    "clause_content": "应关闭不需要的系统服务和高危端口。",
     "description": "DNS 服务器允许非授权的区域传送请求，导致域内所有主机记录泄露。",
     "suggestion": "在 Bind9 配置中设置 allow-transfer { none; }; 或指定受信的主从同步 IP。"
   }
