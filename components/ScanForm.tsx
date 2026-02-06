@@ -9,8 +9,8 @@ interface ScanFormProps {
   config: AppConfig;
   draft: { target: string; domainStr: string; portRange: string; assetName: string; securityLevel: string; location: string; evaluator: string };
   setDraft: React.Dispatch<React.SetStateAction<any>>;
-  logs: {msg: string, type: string, timestamp: string}[];
-  setLogs: React.Dispatch<React.SetStateAction<{msg: string, type: string, timestamp: string}[]>>;
+  logs: {msg: string, type: 'info' | 'warn' | 'error' | 'success' | 'system'}[];
+  setLogs: React.Dispatch<React.SetStateAction<{msg: string, type: 'info' | 'warn' | 'error' | 'success' | 'system'}[]>>;
 }
 
 const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setDraft, logs, setLogs }) => {
@@ -29,7 +29,6 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef({ cancelled: false });
   const hideTimeoutRef = useRef<number | null>(null);
-  const lastLogRef = useRef<string>(""); 
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -37,27 +36,8 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     }
   }, [logs, currentAction]);
 
-  const getTimestamp = () => {
-    const now = new Date();
-    // 使用 HH:mm:ss 格式，不显示毫秒，保持整洁
-    return now.toLocaleTimeString('en-GB', { hour12: false });
-  };
-
-  const addLog = (fullMsg: string, fallbackType: string = 'info') => {
-    // 解析后端发来的 [PREFIX] 格式
-    // 格式如: "[INFO] SCAN: Port 80 found"
-    const regex = /^\[(INFO|WARN|ERROR|SUCCESS|FATAL)\]\s*(.*)/;
-    const match = fullMsg.match(regex);
-    
-    let type = fallbackType;
-    let msg = fullMsg;
-
-    if (match) {
-        type = match[1].toLowerCase(); // INFO -> info
-        msg = match[2]; // 剥离前缀后的内容
-    }
-
-    setLogs(prev => [...prev, { msg, type, timestamp: getTimestamp() }]);
+  const addLog = (msg: string, type: 'info' | 'warn' | 'error' | 'success' | 'system' = 'info') => {
+    setLogs(prev => [...prev, { msg, type }]);
   };
 
   const handleUpdateDraft = (key: string, value: string) => {
@@ -65,8 +45,10 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   };
 
   const handleClearLogs = () => {
-    setLogs([]);
-    localStorage.removeItem('netaudit_logs');
+    if (confirm('是否清空当前所有内核审计日志？')) {
+      setLogs([]);
+      localStorage.removeItem('netaudit_logs');
+    }
   };
 
   const saveToHistory = (ip: string) => {
@@ -80,7 +62,6 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const handleStopScan = () => {
     if (confirm('确认强制中止当前的审计作业吗？')) {
       abortRef.current.cancelled = true;
-      addLog('[ERROR] SIGINT received. Aborting process...', 'error');
     }
   };
 
@@ -102,23 +83,23 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     saveToHistory(draft.target);
     setIsScanning(true);
     setProgress(0);
-    setCurrentAction("Initializing kernel...");
+    setCurrentAction("正在校准审计引擎...");
     abortRef.current.cancelled = false;
-    lastLogRef.current = "";
-    
-    // 清空旧日志，给新扫描腾出空间
-    if (logs.length > 0) {
-        addLog(' ', 'raw'); // 空行
-        addLog('--- NEW SESSION ---', 'raw');
-    }
 
     const domains = draft.domainStr.split(',').map(d => d.trim()).filter(d => d);
+    
     const metadata = {
         assetName: draft.assetName.trim() !== '' ? draft.assetName : `${config.defaultMetadata.assetNamePrefix}${draft.target}`,
         securityLevel: draft.securityLevel !== '' ? draft.securityLevel : config.defaultMetadata.securityLevel,
         location: draft.location.trim() !== '' ? draft.location : config.defaultMetadata.location,
         evaluator: draft.evaluator.trim() !== '' ? draft.evaluator : config.defaultMetadata.evaluator
     };
+
+    const startTime = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    addLog(`---------------- SESSION START [${startTime}] ----------------`, 'system');
+    addLog(`KERNEL: 初始化审计内核 v3.1...`, 'info');
+    addLog(`ASSET: ${metadata.assetName} | LEVEL: ${metadata.securityLevel}`, 'info');
+    addLog(`TARGET: ${draft.target}`, 'info');
     
     try {
       const report = await performScan(
@@ -132,12 +113,9 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         enableBrute,
         (pct, log) => {
           setProgress(pct);
-          setCurrentAction(log.replace(/^\[.*?\]\s*/, '')); // 进度条只显示去前缀后的动作
-          
-          if (log && log !== lastLogRef.current) {
-             lastLogRef.current = log;
-             // 智能添加日志，addLog 会自动解析 [PREFIX]
-             addLog(log);
+          setCurrentAction(log);
+          if (pct > 0 && pct % 20 === 0 && pct < 100) {
+            addLog(`[CORE] 审计进度已同步: ${pct}% - ${log}`, 'info');
           }
         },
         abortRef.current,
@@ -145,46 +123,34 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
       );
 
       setProgress(100);
-      setCurrentAction("Audit Task Completed.");
-      // 延迟跳转，让用户看清最后的 Success 日志
+      setCurrentAction("审计完成");
+      addLog(`NETWORK: 审计作业结束，发现活动向量。`, 'success');
+      
       setTimeout(() => {
         onScanComplete(report);
         setIsScanning(false);
-      }, 1500);
+      }, 1000);
     } catch (err: any) {
-      addLog(`[FATAL] ${err.message}`, 'error');
+      addLog(`ENGINE: ${err.message}`, 'error');
       setIsScanning(false);
       setProgress(0);
-      setCurrentAction("Task Failed");
+      setCurrentAction("");
     }
   };
 
-  // 终端日志颜色映射 (完全复刻截图)
-  const renderLogPrefix = (type: string) => {
-    const baseClass = "font-black mr-2";
+  const getLogColor = (type: string) => {
     switch(type) {
-        case 'info': return <span className={`${baseClass} text-[#00E5FF]`}>INFO</span>; // 亮蓝
-        case 'warn': return <span className={`${baseClass} text-orange-400`}>WARN</span>; // 橙黄
-        case 'error': 
-        case 'fatal': return <span className={`${baseClass} text-red-500`}>ERROR</span>; // 红
-        case 'success': return <span className={`${baseClass} text-[#CCFF00]`}>SUCCESS</span>; // 品牌绿
-        default: return null;
+      case 'success': return 'text-brand';
+      case 'warn': return 'text-orange-400';
+      case 'error': return 'text-danger animate-pulse font-black';
+      case 'system': return 'text-white/30 border-y border-white/5 py-1 my-2 block w-full text-center tracking-[0.3em]';
+      default: return 'text-white/60';
     }
-  };
-
-  const getMessageStyle = (type: string) => {
-      switch(type) {
-        case 'error':
-        case 'fatal': return 'text-red-400 font-bold'; // 错误信息本身也标红
-        case 'warn': return 'text-orange-300';
-        case 'success': return 'text-[#CCFF00]';
-        default: return 'text-white/90'; // 默认信息为亮白
-      }
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch animate-in slide-in-from-bottom-12 duration-1000">
-      {/* 左侧配置面板 */}
+      {/* 左侧配置面板 - 固定高度 */}
       <div className="lg:col-span-5 h-[750px]">
         <div className="tactical-card p-1 bg-gradient-to-br from-white/10 to-transparent rounded-[2.5rem] shadow-2xl h-full">
           <div className="bg-obsidian/95 rounded-[2.4rem] p-8 h-full flex flex-col justify-between overflow-y-auto custom-scrollbar">
@@ -342,67 +308,55 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         </div>
       </div>
 
-      {/* 右侧日志面板 - Terminal 风格重构 */}
+      {/* 右侧日志面板 - 固定高度与内部滚动 */}
       <div className="lg:col-span-7 h-[750px]">
-        <div className="tactical-card h-full flex flex-col overflow-hidden rounded-[2.5rem] border border-white/10 bg-[#0a0a0a] shadow-2xl relative group">
-          
+        <div className="tactical-card h-full flex flex-col overflow-hidden rounded-[2.5rem] border border-white/10 bg-obsidian/40 shadow-2xl relative">
           {/* Terminal Header */}
-          <div className="px-6 py-4 border-b border-white/5 bg-[#111] flex items-center justify-between shrink-0">
+          <div className="px-8 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
              <div className="flex items-center gap-3">
-               <div className="flex gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                  <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                  <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-               </div>
-               <span className="font-mono text-[10px] text-white/40 ml-2">root@netaudit-kernel:~</span>
+               <div className="w-1.5 h-1.5 rounded-full bg-brand animate-pulse"></div>
+               <span className="font-black uppercase tracking-[0.4em] text-[9px] text-white/40 italic">引擎终端 (V3.1-STABLE)</span>
              </div>
-             <button onClick={handleClearLogs} className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[9px] font-mono text-white/30 transition-all">
-               <Trash2 size={10} /> CLEAR
+             <button onClick={handleClearLogs} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-danger/20 hover:text-danger text-[8px] font-black uppercase tracking-widest transition-all text-white/20 border border-transparent hover:border-danger/20">
+               <Trash2 size={10} /> 清除
              </button>
           </div>
 
-          {/* Log Area */}
-          <div ref={scrollRef} className="p-6 font-mono text-[11px] flex-1 overflow-y-auto bg-[#050505] custom-scrollbar leading-relaxed">
+          {/* Log Area - 核心滚动区 */}
+          <div ref={scrollRef} className="p-8 font-mono text-[10px] flex-1 overflow-y-auto bg-black/60 custom-scrollbar scanline-container">
             {logs.length === 0 && !isScanning && (
-              <div className="h-full flex flex-col items-center justify-center space-y-4 opacity-20">
-                <Terminal size={64} strokeWidth={1} />
-                <span className="font-black uppercase tracking-widest text-xs">TERMINAL READY</span>
+              <div className="h-full flex flex-col items-center justify-center space-y-6 opacity-10">
+                <Terminal size={48} strokeWidth={1} className="animate-pulse" />
+                <span className="font-black uppercase tracking-[1.5em] text-xs">Waiting for Task</span>
               </div>
             )}
             
-            <div className="flex flex-col gap-0.5">
+            <div className="space-y-2.5 pb-10">
               {logs.map((log, i) => (
-                <div key={i} className="flex gap-3 px-2 py-0.5 -mx-2 hover:bg-white/[0.02] rounded-sm group/log">
-                  <span className="text-white/20 shrink-0 select-none opacity-50 w-8 text-right">]</span>
-                  <div className="flex-1 break-all -ml-6">
-                     <span className="text-white/20 mr-2 select-none">[{log.timestamp}]</span>
-                     {renderLogPrefix(log.type)}
-                     <span className={getMessageStyle(log.type)}>{log.msg}</span>
-                  </div>
+                <div key={i} className={`flex gap-4 animate-in slide-in-from-left-4 duration-300 ${getLogColor(log.type)}`}>
+                  {log.type !== 'system' && <span className="opacity-10 shrink-0 font-black text-[8px] pt-0.5">[{i.toString().padStart(3, '0')}]</span>}
+                  <span className="leading-relaxed flex-1 break-all whitespace-pre-wrap">{log.msg}</span>
                 </div>
               ))}
-              
-              {/* 底部光标行 */}
-              {isScanning && (
-                  <div className="flex gap-3 px-2 py-0.5 -mx-2 mt-1">
-                      <span className="text-white/20 select-none opacity-50">[{getTimestamp()}]</span>
-                      <div className="text-brand flex items-center">
-                          <span className="mr-2 font-bold text-white/40">EXEC &gt;</span>
-                          <span className="opacity-80">{currentAction}</span>
-                          <span className="ml-1 w-2 h-4 bg-brand animate-pulse inline-block align-middle"></span>
-                      </div>
-                  </div>
-              )}
             </div>
           </div>
 
-          {/* 进度条 - 底部吸附 */}
+          {/* 进度条 - 固定在终端底部 */}
           {isScanning && (
-            <div className="h-1 bg-white/10 w-full shrink-0">
-              <div 
-                className="h-full bg-brand shadow-[0_0_10px_#CCFF00]" 
-                style={{ width: `${progress}%`, transition: 'width 0.2s ease-out' }}
-              ></div>
+            <div className="px-8 py-6 bg-brand/[0.02] border-t border-white/5 shrink-0 animate-in slide-in-from-bottom-4">
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-3">
+                  <Zap size={14} className="text-brand animate-pulse" />
+                  <span className="text-[10px] font-black text-brand uppercase tracking-[0.2em] italic">内核作业中...</span>
+                </div>
+                <span className="text-[11px] font-mono text-brand font-black tracking-widest">{progress}%</span>
+              </div>
+              <div className="text-white/80 font-black text-[10px] mb-4 uppercase italic tracking-tight truncate">
+                {currentAction}
+              </div>
+              <div className="h-2 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
+                <div className="h-full bg-brand shadow-[0_0_15px_#CCFF00] transition-all duration-500 rounded-full" style={{ width: `${progress}%` }}></div>
+              </div>
             </div>
           )}
         </div>
