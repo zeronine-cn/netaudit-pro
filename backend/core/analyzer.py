@@ -1,4 +1,3 @@
-
 import json
 import os
 
@@ -83,6 +82,7 @@ class SecurityAnalyzer:
         if protocol in ["HTTP", "HTTPS"]:
             web_res = extra.get("web_results", {})
             tls_res = extra.get("tls_results", {})
+            deep_scan = web_res.get("deep_scan", {})
             verified_vhosts = extra.get("verified_vhosts", [])
 
             # 4.1 虚拟主机发现 (VHost)
@@ -97,8 +97,8 @@ class SecurityAnalyzer:
                 })
 
             # 4.2 敏感目录泄露
-            if web_res.get("deep_scan", {}).get("exposed_paths"):
-                for path_obj in web_res["deep_scan"]["exposed_paths"]:
+            if deep_scan.get("exposed_paths"):
+                for path_obj in deep_scan["exposed_paths"]:
                     findings.append({
                         "id": f"WEB-DIR-{port}-{path_obj['path']}", "protocol": protocol,
                         "check_item": "Web 敏感文件/目录泄露", "risk_level": "高危",
@@ -110,42 +110,156 @@ class SecurityAnalyzer:
 
             # 4.3 版本泄露
             server_header = web_res.get("banner", "")
-            if len(server_header) > 2 and server_header != "Unknown":
+            is_version_leak = web_res.get("version_leak", False)
+            rule_leak = self.rules.get("HTTP_BANNER_LEAK", {})
+            if is_version_leak and server_header != "Unknown":
                  findings.append({
-                    "id": f"WEB-BANNER-{port}", "protocol": protocol,
-                    "check_item": "Web 服务器版本信息泄露", "risk_level": "中危",
-                    "description": f"HTTP 响应头 Server 字段泄露了具体软件版本：{server_header}",
-                    "detail_value": server_header,
-                    "suggestion": "配置 Nginx (server_tokens off) 或 Apache (ServerTokens Prod) 隐藏版本。",
-                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                    "id": f"WEB-BANNER-{port}", 
+                    "protocol": protocol,
+                    "check_item": rule_leak.get("name", "Web 服务器版本信息泄露"),
+                    "risk_level": "中危", 
+                    "description": f"HTTP 响应头 Server 字段泄露了具体软件版本：{server_header}。{rule_leak.get('description', '')}",
+                    "detail_value": f"Banner: {server_header}",
+                    "suggestion": rule_leak.get("suggestion", "配置 Nginx (server_tokens off) 或 Apache (ServerTokens Prod) 隐藏版本。"),
+                    "mlps_clause": rule_leak.get("clause_id", "G3-安全计算环境-入侵防范")
                 })
 
             # 4.4 安全头缺失
-            missing = web_res.get("deep_scan", {}).get("missing_headers", [])
+            missing = deep_scan.get("missing_headers", [])
             if missing:
+                rule_headers = self.rules.get("WEB_MISSING_HEADERS", {})
                 findings.append({
-                    "id": f"WEB-HEADER-{port}", "protocol": protocol,
-                    "check_item": "Web 安全防护响应头缺失", "risk_level": "低危",
+                    "id": f"WEB-HEADER-{port}", 
+                    "protocol": protocol,
+                    "check_item": rule_headers.get("name", "Web 安全防护响应头缺失"), 
+                    "risk_level": "低危",
                     "description": f"缺失关键安全头: {', '.join(missing[:3])} 等。",
                     "detail_value": f"Missing: {', '.join(missing)}",
-                    "suggestion": "配置 Web 服务器添加 X-Frame-Options, CSP 等安全头。",
-                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                    "suggestion": rule_headers.get("suggestion", "配置 Web 服务器添加 X-Frame-Options, CSP 等安全头。"),
+                    "mlps_clause": rule_headers.get("clause_id", "G3-安全计算环境-入侵防范")
+                })
+            
+            # 不安全的 HTTP 方法
+            unsafe_methods = deep_scan.get("unsafe_methods", [])
+            if unsafe_methods:
+                rule_methods = self.rules.get("WEB_UNSAFE_METHODS", {})
+                findings.append({
+                    "id": f"WEB-METHODS-{port}",
+                    "protocol": protocol,
+                    "check_item": rule_methods.get("name", "启用了不安全的 HTTP 方法"),
+                    "risk_level": "中危",
+                    "description": f"Web 服务器启用了 {', '.join(unsafe_methods)} 等危险方法，可能导致文件操作或 XST 攻击。",
+                    "detail_value": f"Methods: {', '.join(unsafe_methods)}",
+                    "suggestion": rule_methods.get("suggestion", "仅允许 GET, POST, HEAD 方法。"),
+                    "mlps_clause": rule_methods.get("clause_id", "G3-安全计算环境-入侵防范")
+                })
+
+            # CORS 配置
+            if deep_scan.get("cors_issue"):
+                rule_cors = self.rules.get("WEB_CORS_ANY", {})
+                findings.append({
+                    "id": f"WEB-CORS-{port}",
+                    "protocol": protocol,
+                    "check_item": rule_cors.get("name", "CORS 跨域配置过度宽松"),
+                    "risk_level": "高危",
+                    "description": rule_cors.get("description", "Access-Control-Allow-Origin: *"),
+                    "detail_value": "Origin: *",
+                    "suggestion": rule_cors.get("suggestion", "严格限制白名单域名。"),
+                    "mlps_clause": rule_cors.get("clause_id", "G3-安全计算环境-访问控制")
+                })
+
+            # Cookie 安全
+            cookie_issues = deep_scan.get("cookie_issues", [])
+            if cookie_issues:
+                rule_cookie = self.rules.get("WEB_COOKIE_FLAGS", {})
+                findings.append({
+                    "id": f"WEB-COOKIE-{port}",
+                    "protocol": protocol,
+                    "check_item": rule_cookie.get("name", "Cookie 安全属性缺失"),
+                    "risk_level": "中危",
+                    "description": f"部分 Cookie 缺失 Secure 属性: {', '.join(cookie_issues[:2])} 等。",
+                    "detail_value": str(cookie_issues),
+                    "suggestion": rule_cookie.get("suggestion", "添加 Secure 和 HttpOnly 标志。"),
+                    "mlps_clause": rule_cookie.get("clause_id", "G3-安全计算环境-身份鉴别")
+                })
+            
+            # [NEW] HTTP 协议专属检查：未跳转 HTTPS
+            specifics = deep_scan.get("specifics", {})
+            if protocol == "HTTP" and specifics.get("https_redirect") is False:
+                rule_redirect = self.rules.get("HTTP_NO_HTTPS", {})
+                findings.append({
+                    "id": f"HTTP-REDIRECT-{port}",
+                    "protocol": "HTTP",
+                    "check_item": rule_redirect.get("name", "HTTP 服务未启用 HTTPS 跳转"),
+                    "risk_level": "低危", # 修正：统一使用中文枚举，确保前端渲染蓝色标签
+                    "description": rule_redirect.get("description", "Web 服务未配置自动跳转 HTTPS，存在明文传输风险。"),
+                    "detail_value": "No Redirect Found",
+                    "suggestion": rule_redirect.get("suggestion", "配置 301 重定向至 HTTPS。"),
+                    "mlps_clause": rule_redirect.get("clause_id", "G3-安全通信网络-通信保密性")
                 })
 
             # 4.5 TLS 漏洞 (HTTPS Only)
             if protocol == "HTTPS":
-                weak_protos = tls_res.get("weak_protocols", [])
-                if weak_protos:
+                cert_vulns = tls_res.get("vulnerabilities", [])
+                
+                # 密钥强度检测
+                if "WEAK_KEY_SIZE" in cert_vulns:
+                    rule_weak_key = self.rules.get("TLS_WEAK_CERT", {})
                     findings.append({
-                        "id": f"TLS-OLD-{port}", "protocol": "HTTPS",
-                        "check_item": "使用了不安全的加密协议", "risk_level": "高危",
-                        "description": f"服务器启用了已弃用的老旧协议: {', '.join(weak_protos)}。",
-                        "detail_value": str(weak_protos),
-                        "suggestion": "禁用 TLSv1.0/1.1，仅启用 TLSv1.2 及以上版本。",
-                        "mlps_clause": "G3-安全通信网络-通信保密性"
+                        "id": f"TLS-KEY-{port}", 
+                        "protocol": "HTTPS",
+                        "check_item": rule_weak_key.get("name", "数字证书密钥强度不足"),
+                        "risk_level": "高危",
+                        "description": f"证书公钥长度为 {tls_res.get('cert_info', {}).get('key_size')} 位 (不足 2048 位)，不满足通信保密性要求。",
+                        "detail_value": f"Key Size: {tls_res.get('cert_info', {}).get('key_size')} bits",
+                        "suggestion": rule_weak_key.get("suggestion", "重新生成密钥长度至少为 2048 位的 RSA 证书。"),
+                        "mlps_clause": rule_weak_key.get("clause_id", "G3-安全通信网络-通信保密性")
+                    })
+
+                # 通信完整性检测
+                if "WEAK_SIGNATURE" in cert_vulns:
+                    rule_integrity = self.rules.get("TLS_WEAK_SIGNATURE", {})
+                    findings.append({
+                        "id": f"TLS-SIG-{port}", 
+                        "protocol": "HTTPS",
+                        "check_item": rule_integrity.get("name", "通信完整性校验不足"),
+                        "risk_level": "高危",
+                        "description": f"证书使用了弱哈希算法 ({tls_res.get('cert_info', {}).get('sig_algo')}) 进行签名，无法保证通信完整性。",
+                        "detail_value": f"Sig Algo: {tls_res.get('cert_info', {}).get('sig_algo')}",
+                        "suggestion": rule_integrity.get("suggestion", "使用 SHA-256 或更高强度的签名算法重新颁发证书。"),
+                        "mlps_clause": rule_integrity.get("clause_id", "G3-安全通信网络-通信完整性")
                     })
                 
-                cert_vulns = tls_res.get("vulnerabilities", [])
+                # 弱加密套件检测
+                if "WEAK_CIPHER_SUITE" in cert_vulns and tls_res.get("weak_ciphers"):
+                    rule_cipher = self.rules.get("TLS_WEAK_CIPHER", {})
+                    weak_list = tls_res.get("weak_ciphers", [])
+                    findings.append({
+                        "id": f"TLS-CIPHER-{port}", 
+                        "protocol": "HTTPS",
+                        "check_item": rule_cipher.get("name", "启用了不安全的加密套件"),
+                        "risk_level": "高危",
+                        "description": f"服务端接受以下弱加密套件: {', '.join(weak_list)}，攻击者可破解通信内容。",
+                        "detail_value": f"Suites: {', '.join(weak_list)}",
+                        "suggestion": rule_cipher.get("suggestion", "禁用 RC4/DES/3DES 等算法。"),
+                        "mlps_clause": rule_cipher.get("clause_id", "G3-安全通信网络-通信保密性")
+                    })
+
+                # 老旧协议检测
+                weak_protos = tls_res.get("weak_protocols", [])
+                if weak_protos:
+                    rule_tls = self.rules.get("TLS_OLD_PROTO", {})
+                    findings.append({
+                        "id": f"TLS-OLD-{port}", 
+                        "protocol": "HTTPS",
+                        "check_item": rule_tls.get("name", "使用了不安全的加密协议"),
+                        "risk_level": "高危",
+                        "description": f"服务器启用了已弃用的老旧协议: {', '.join(weak_protos)}。",
+                        "detail_value": str(weak_protos),
+                        "suggestion": rule_tls.get("suggestion", "禁用 TLSv1.0/1.1，仅启用 TLSv1.2 及以上版本。"),
+                        "mlps_clause": rule_tls.get("clause_id", "G3-安全通信网络-通信保密性")
+                    })
+                
                 if "CERT_EXPIRED" in cert_vulns:
                     findings.append({
                         "id": f"TLS-EXP-{port}", "protocol": "HTTPS",
@@ -160,13 +274,16 @@ class SecurityAnalyzer:
         if protocol == "DNS":
             res = extra.get("dns_results", {})
             if res.get("vulnerable"):
+                rule_dns = self.rules.get("DNS_ZONE_TRANSFER", {})
                 findings.append({
-                    "id": f"DNS-AXFR-{port}", "protocol": protocol,
-                    "check_item": "DNS 区域传送漏洞", "risk_level": "高危",
+                    "id": f"DNS-AXFR-{port}", 
+                    "protocol": protocol,
+                    "check_item": rule_dns.get("name", "DNS 区域传送漏洞"),
+                    "risk_level": "高危",
                     "description": f"DNS 服务器允许非授权的区域传送 (AXFR)，导致 {res.get('records_count', 0)} 条解析记录泄露。",
                     "detail_value": "\n".join(res.get("records", [])),
-                    "suggestion": "在 Bind 配置中限制 'allow-transfer' 仅允许从 DNS 服务器 (Slave DNS) IP 访问。",
-                    "mlps_clause": "G3-安全区域边界-边界防护"
+                    "suggestion": rule_dns.get("suggestion", "在 Bind 配置中限制 'allow-transfer'。"),
+                    "mlps_clause": rule_dns.get("clause_id", "G3-安全区域边界-边界防护")
                 })
             else:
                  findings.append({
@@ -178,8 +295,7 @@ class SecurityAnalyzer:
                     "mlps_clause": "G3-安全区域边界-访问控制"
                 })
 
-        # --- 新增逻辑：高危/非必要端口判定 ---
-        # 定义高危/不建议开放的端口列表
+        # 6. 高危/非必要端口判定
         RISKY_PORTS = {
             21: {"name": "FTP", "desc": "明文传输协议，建议使用 SFTP", "risk": "中危"},
             23: {"name": "Telnet", "desc": "明文传输协议，完全不安全，建议使用 SSH", "risk": "高危"},
@@ -194,6 +310,7 @@ class SecurityAnalyzer:
 
         if port in RISKY_PORTS:
             info = RISKY_PORTS[port]
+            rule_tcp = self.rules.get("TCP_PORT_OPEN", {})
             findings.append({
                 "id": f"RISKY-PORT-{port}", 
                 "protocol": "TCP",
@@ -202,10 +319,10 @@ class SecurityAnalyzer:
                 "description": f"检测到高危端口 {port} ({info['name']}) 处于开放状态。",
                 "detail_value": f"Port {port} ({info['name']}) is OPEN. {info['desc']}",
                 "suggestion": f"该端口属于高风险服务，请立即关闭或通过防火墙限制仅允许特定 IP 访问。",
-                "mlps_clause": "G3-安全区域边界-访问控制" 
+                "mlps_clause": rule_tcp.get("clause_id", "G3-安全区域边界-访问控制")
             })
 
-        # 6. 兜底
+        # 7. 兜底
         if not findings:
             findings.append({
                 "id": f"PORT-{port}", "protocol": protocol, "check_item": "常规端口开放", 

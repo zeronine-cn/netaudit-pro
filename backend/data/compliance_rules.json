@@ -8,13 +8,29 @@
     "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在已知加密弱点。",
     "suggestion": "请在 Web 服务器 (Nginx/Apache) 配置中禁用 TLSv1.0/1.1，仅启用 TLSv1.2 和 TLSv1.3。"
   },
+  "TLS_WEAK_CIPHER": {
+    "name": "启用了不安全的加密套件",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
+    "description": "服务器允许使用 RC4、3DES、DES 或 NULL 等弱加密套件，无法保障通信数据的机密性。",
+    "suggestion": "修改 SSL 配置 (ssl_ciphers)，禁用 RC4/DES/3DES 等弱算法，推荐使用 HIGH:!aNULL:!MD5。"
+  },
   "TLS_WEAK_CERT": {
     "name": "数字证书密钥强度不足",
     "risk_level": "High",
     "clause_id": "G3-安全通信网络-通信保密性",
     "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
-    "description": "检测到证书公钥长度小于 2048 位，不符合当前安全强度要求。",
+    "description": "检测到证书公钥长度小于 2048 位，不符合当前安全强度要求，易被暴力破解。",
     "suggestion": "请重新生成私钥和证书，RSA 密钥长度至少为 2048 位，或使用 ECC 算法。"
+  },
+  "TLS_WEAK_SIGNATURE": {
+    "name": "通信完整性校验不足",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信完整性",
+    "clause_content": "应采用校验技术或密码技术保证通信过程中数据的完整性。",
+    "description": "证书使用了弱哈希算法 (如 MD5/SHA1) 进行签名，无法有效防止数据篡改，无法保障通信完整性。",
+    "suggestion": "升级证书签名算法，使用 SHA-256 或更高强度的哈希算法重新颁发证书。"
   },
   "HTTP_BANNER_LEAK": {
     "name": "Web 服务器版本信息泄露",
@@ -23,6 +39,14 @@
     "clause_content": "应最小化安装的组件和应用程序；应隐藏不必要的系统信息。",
     "description": "HTTP 响应头 'Server' 字段泄露了具体的软件版本号，可被攻击者用于精准利用漏洞。",
     "suggestion": "修改 Nginx 配置 'server_tokens off;' 或 Apache 'ServerTokens Prod' 以隐藏版本号。"
+  },
+  "HTTP_NO_HTTPS": {
+    "name": "HTTP 服务未启用 HTTPS 跳转",
+    "risk_level": "Low",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
+    "description": "检测到 HTTP 服务未配置自动跳转到 HTTPS，用户可能会因疏忽使用明文传输数据。",
+    "suggestion": "在 Web 服务器中配置 Rewrite 规则，将 HTTP 请求强制重定向至 HTTPS。"
   },
   "WEB_SENSITIVE_EXPOSURE": {
     "name": "Web 敏感目录或文件暴露",
@@ -39,6 +63,30 @@
     "clause_content": "应采取措施防范恶意的网络攻击。",
     "description": "检测到响应头缺失 X-Frame-Options 或 CSP 等防护，容易遭受点击劫持或 XSS 攻击。",
     "suggestion": "配置 Web 服务器添加：X-Frame-Options: SAMEORIGIN 和 Content-Security-Policy 相关策略。"
+  },
+  "WEB_COOKIE_FLAGS": {
+    "name": "Cookie 安全属性缺失",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "身份鉴别信息应具有不易被冒用的特点，鉴别数据在传输过程中应加密。",
+    "description": "检测到会话 Cookie 缺失 Secure 或 HttpOnly 属性，可能导致 Session 被 XSS 窃取或中间人劫持。",
+    "suggestion": "在 Web 应用或服务器配置中为敏感 Cookie 设置 'Secure' 和 'HttpOnly' 标志。"
+  },
+  "WEB_UNSAFE_METHODS": {
+    "name": "启用了不安全的 HTTP 方法",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应最小化安装的组件和应用程序；应关闭不需要的系统服务、默认共享和高危端口。",
+    "description": "Web 服务器启用了 PUT、DELETE 或 TRACE 等不必要的方法，增加了文件上传、删除或跨站追踪攻击的风险。",
+    "suggestion": "仅允许 GET, POST, HEAD 方法。在 Nginx/Apache 中禁用其他非必须方法。"
+  },
+  "WEB_CORS_ANY": {
+    "name": "CORS 跨域配置过度宽松",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-访问控制",
+    "clause_content": "应根据访问控制策略设置访问控制规则，控制粒度应达到主体为用户级或进程级。",
+    "description": "Access-Control-Allow-Origin 设置为 '*'，允许任意域名的网站读取本站资源，存在数据泄露风险。",
+    "suggestion": "严格限制 Access-Control-Allow-Origin 为具体的授信域名白名单，禁止使用通配符 '*'。"
   },
   "SSH_WEAK_PASS": {
     "name": "SSH 弱口令漏洞",
