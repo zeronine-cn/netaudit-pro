@@ -8,8 +8,12 @@ import { ScanReport, AppConfig } from '../types';
 export const generateAIAdvice = async (report: ScanReport, aiConfig: AppConfig['aiConfig']) => {
   const hasCompromised = report.defects.some(d => d.check_item.includes('弱口令') || d.metadata?.is_compromised);
 
+  // 根据当前 provider 获取对应的独立配置
+  const provider = aiConfig.provider;
+  const currentConfig = aiConfig[provider]; 
+
   // 密钥获取优先级：用户填写 > 环境注入
-  const activeApiKey = aiConfig.apiKey || process.env.API_KEY;
+  const activeApiKey = currentConfig.apiKey || process.env.API_KEY;
 
   const prompt = `
     你是一名世界级的红队安全专家。请对以下资产审计报告进行深度评估：
@@ -30,15 +34,21 @@ export const generateAIAdvice = async (report: ScanReport, aiConfig: AppConfig['
     要求：语气冷峻、专业，使用 Markdown 格式。直接输出内容，不要任何开场白。
   `;
 
-  if (aiConfig.provider === 'gemini') {
+  if (provider === 'gemini') {
     try {
       if (!activeApiKey) {
         return "### ⚠️ 鉴权令牌缺失\n\nAI 专家引擎未能检测到有效的 API Key。请在 [引擎配置] 中手动填写您的密钥或确保环境变量已正确注入。";
       }
 
-      const ai = new GoogleGenAI({ apiKey: activeApiKey });
+      // 构造 ClientOptions, 如果用户填了代理地址则传入 baseUrl
+      const clientParams: any = { apiKey: activeApiKey };
+      if (currentConfig.baseUrl && currentConfig.baseUrl.trim() !== '') {
+          clientParams.baseUrl = currentConfig.baseUrl;
+      }
+
+      const ai = new GoogleGenAI(clientParams);
       const response = await ai.models.generateContent({
-        model: aiConfig.model || 'gemini-3-pro-preview',
+        model: currentConfig.model || 'gemini-3-pro-preview',
         contents: prompt,
       });
       return response.text || "AI 服务响应异常：空数据。";
@@ -49,19 +59,20 @@ export const generateAIAdvice = async (report: ScanReport, aiConfig: AppConfig['
   }
 
   // 模式 2: 自定义 OpenAI 兼容接口
-  if (!aiConfig.baseUrl) {
+  // 使用 currentConfig 中的 baseUrl
+  if (!currentConfig.baseUrl) {
      return "### ⚠️ 配置缺失\n\n自定义接口模式必须填写 [接口地址 (Endpoint)]。";
   }
 
   try {
-    const response = await fetch(`${aiConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const response = await fetch(`${currentConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${activeApiKey}`
       },
       body: JSON.stringify({
-        model: aiConfig.model,
+        model: currentConfig.model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
         max_tokens: 2048,
@@ -78,6 +89,6 @@ export const generateAIAdvice = async (report: ScanReport, aiConfig: AppConfig['
     return data.choices[0].message.content;
   } catch (error: any) {
     console.error("自定义 AI 审计异常:", error);
-    return `### ⚠️ AI 审计链路中断 (Custom)\n\n端点: ${aiConfig.baseUrl}\n原因: ${error.message}`;
+    return `### ⚠️ AI 审计链路中断 (Custom)\n\n端点: ${currentConfig.baseUrl}\n原因: ${error.message}`;
   }
 };

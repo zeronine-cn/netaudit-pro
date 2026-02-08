@@ -24,11 +24,27 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
     }));
   };
 
-  const handleAiConfigChange = (key: keyof AppConfig['aiConfig'], value: any) => {
+  const handleAiProviderChange = (provider: 'gemini' | 'custom') => {
     setConfig(prev => ({
-      ...prev,
-      aiConfig: { ...prev.aiConfig, [key]: value }
+        ...prev,
+        aiConfig: { ...prev.aiConfig, provider }
     }));
+  };
+
+  const handleAiFieldChange = (field: 'baseUrl' | 'apiKey' | 'model', value: string) => {
+      setConfig(prev => {
+          const provider = prev.aiConfig.provider;
+          return {
+              ...prev,
+              aiConfig: {
+                  ...prev.aiConfig,
+                  [provider]: {
+                      ...prev.aiConfig[provider],
+                      [field]: value
+                  }
+              }
+          };
+      });
   };
 
   const handleDefaultMetadataChange = (key: keyof AppConfig['defaultMetadata'], value: string) => {
@@ -78,6 +94,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
       setIsChangingPassword(false);
     }, 2000);
   };
+
+  // 快捷获取当前 provider 的配置对象
+  const currentAiConfig = config.aiConfig[config.aiConfig.provider];
 
   return (
     <div className="space-y-10 animate-in fade-in duration-500 pb-20 max-w-[1400px] mx-auto px-4">
@@ -247,7 +266,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
            </div>
         </div>
 
-        {/* AI 专家审计核心 - 移除 API KEY 输入框 */}
+        {/* AI 专家审计核心 */}
         <div className="tactical-card p-10 rounded-[2.5rem] border-l-8 border-l-indigo-500 col-span-1 bg-indigo-500/5 relative overflow-hidden bg-black/40 shadow-2xl">
           <div className="absolute top-0 left-0 w-2 h-full bg-indigo-500 opacity-20"></div>
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
@@ -257,16 +276,16 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
             </h3>
             <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 self-stretch md:self-auto">
                <button 
-                 onClick={() => handleAiConfigChange('provider', 'gemini')}
+                 onClick={() => handleAiProviderChange('gemini')}
                  className={`flex-1 px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3 ${config.aiConfig.provider === 'gemini' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
                >
-                 <Sparkles size={14} /> GEMINI
+                 <Sparkles size={14} /> GOOGLE GEN AI
                </button>
                <button 
-                 onClick={() => handleAiConfigChange('provider', 'custom')}
+                 onClick={() => handleAiProviderChange('custom')}
                  className={`flex-1 px-6 py-3 rounded-xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-3 ${config.aiConfig.provider === 'custom' ? 'bg-indigo-600 text-white shadow-lg' : 'text-white/40 hover:text-white'}`}
                >
-                 <ShieldEllipsis size={14} /> 自定义接口
+                 <ShieldEllipsis size={14} /> OPENAI / 兼容协议
                </button>
             </div>
           </div>
@@ -276,21 +295,36 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
               <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">调用模型 (MODEL ID)</label>
               <input 
                 type="text" 
-                value={config.aiConfig.model}
-                onChange={(e) => handleAiConfigChange('model', e.target.value)}
+                value={currentAiConfig.model}
+                onChange={(e) => handleAiFieldChange('model', e.target.value)}
                 className="w-full px-6 py-5 bg-black/40 border border-white/10 rounded-2xl text-white font-bold mono focus:border-indigo-500 outline-none transition-all shadow-inner"
-                placeholder="gemini-3-pro-preview"
+                placeholder={config.aiConfig.provider === 'gemini' ? "gemini-2.0-flash-exp" : "deepseek-chat"}
               />
             </div>
 
-            <div className="space-y-4">
-              <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">接口地址 (ENDPOINT)</label>
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
+              <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">
+                {config.aiConfig.provider === 'gemini' ? "API 鉴权密钥 (GOOGLE AI STUDIO KEY)" : "API 鉴权密钥 (BEARER TOKEN)"}
+              </label>
+              <input 
+                type="password" 
+                value={currentAiConfig.apiKey || ''}
+                onChange={(e) => handleAiFieldChange('apiKey', e.target.value)}
+                className="w-full px-6 py-5 bg-black/40 border border-white/10 rounded-2xl text-white font-bold mono focus:border-indigo-500 outline-none transition-all shadow-inner"
+                placeholder={config.aiConfig.provider === 'gemini' ? "AIzaSy..." : "sk-..."}
+              />
+            </div>
+
+            <div className="col-span-1 md:col-span-2 space-y-4 animate-in fade-in slide-in-from-top-2">
+              <label className="block text-[11px] font-black uppercase tracking-[0.4em] text-white/20 ml-1">
+                {config.aiConfig.provider === 'gemini' ? "接口地址 (API ENDPOINT / PROXY)" : "接口地址 (ENDPOINT URL)"}
+              </label>
               <input 
                 type="text" 
-                value={config.aiConfig.baseUrl}
-                onChange={(e) => handleAiConfigChange('baseUrl', e.target.value)}
+                value={currentAiConfig.baseUrl}
+                onChange={(e) => handleAiFieldChange('baseUrl', e.target.value)}
                 className="w-full px-6 py-5 bg-black/40 border border-white/10 rounded-2xl text-white font-bold mono focus:border-indigo-500 outline-none transition-all shadow-inner"
-                placeholder="https://api.google.com"
+                placeholder={config.aiConfig.provider === 'gemini' ? "https://generativelanguage.googleapis.com (可选/代理地址)" : "https://api.deepseek.com/v1"}
               />
             </div>
 
@@ -298,7 +332,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ config, setConfig }) => {
                <div className="flex items-center gap-5">
                   <Info className="text-indigo-400 shrink-0" size={24} />
                   <p className="text-[11px] font-bold text-indigo-200/50 uppercase tracking-[0.1em] italic leading-relaxed">
-                    安全说明：系统已启用安全底座（process.env.API_KEY）自动注入，无需手动管理 API 访问令牌。
+                    {config.aiConfig.provider === 'gemini' 
+                      ? "GOOGLE GEN AI 说明：默认直连 Google 官方节点。若使用国内反向代理或 API 中转，请在上方“接口地址”中填入代理 URL。API Key 可手动填入或留空使用环境变量。"
+                      : "OPENAI 兼容协议说明：支持 DeepSeek、Kimi、Ollama (本地) 等所有兼容 OpenAI 接口规范的模型。请务必在 URL 中包含 /v1 后缀（如 http://localhost:11434/v1）。"
+                    }
                   </p>
                </div>
             </div>

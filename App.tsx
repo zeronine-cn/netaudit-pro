@@ -28,18 +28,21 @@ function App() {
     return savedLogs ? JSON.parse(savedLogs) : [];
   });
 
-  const [scanDraft, setScanDraft] = useState({
-    target: '127.0.0.1',
-    domainStr: '', 
-    portRange: '22, 80, 443, 3306, 6379, 5432, 27017',
-    assetName: '',
-    securityLevel: '', 
-    location: '',      
-    evaluator: ''       
-  });
-  
   const [config, setConfig] = useState<AppConfig>(() => {
-    // 定义完整的默认配置，包含所有8个端口
+    const defaultAiConfig: AppConfig['aiConfig'] = {
+        provider: 'gemini',
+        gemini: {
+            baseUrl: '',
+            apiKey: '',
+            model: 'gemini-2.0-flash-exp'
+        },
+        custom: {
+            baseUrl: 'https://api.deepseek.com/v1',
+            apiKey: '',
+            model: 'deepseek-chat'
+        }
+    };
+
     const defaultConfig: AppConfig = {
       apiBaseUrl: window.location.origin,
       adminPassword: 'admin888',
@@ -53,11 +56,7 @@ function App() {
         db_usernames: 'root\nadmin\npostgres\nsa',
         db_passwords: 'root\nadmin\npassword\n123456'
       },
-      aiConfig: {
-        provider: 'gemini',
-        baseUrl: 'https://api.google.com',
-        model: 'gemini-3-pro-preview'
-      },
+      aiConfig: defaultAiConfig,
       defaultMetadata: {
         securityLevel: '三级',
         location: '上海金桥机房',
@@ -70,14 +69,50 @@ function App() {
     if (savedConfig) {
         try {
             const parsed = JSON.parse(savedConfig);
-            // 关键修复：深度合并逻辑
-            // 即使缓存中缺少 mysql/redis 等字段，也会从 defaultConfig 中补全
+            
+            // 兼容性迁移：如果读取到旧版 aiConfig (扁平结构)，自动迁移到新版分层结构
+            let migratedAiConfig = defaultAiConfig;
+            
+            if (parsed.aiConfig) {
+                // 判断是否为旧版结构 (直接含有 baseUrl 字符串)
+                if (typeof parsed.aiConfig.baseUrl === 'string') {
+                    if (parsed.aiConfig.provider === 'custom') {
+                        migratedAiConfig = {
+                            ...defaultAiConfig,
+                            provider: 'custom',
+                            custom: {
+                                baseUrl: parsed.aiConfig.baseUrl || defaultAiConfig.custom.baseUrl,
+                                apiKey: parsed.aiConfig.apiKey || '',
+                                model: parsed.aiConfig.model || defaultAiConfig.custom.model
+                            }
+                        };
+                    } else {
+                        migratedAiConfig = {
+                            ...defaultAiConfig,
+                            provider: 'gemini',
+                            gemini: {
+                                baseUrl: parsed.aiConfig.baseUrl || '',
+                                apiKey: parsed.aiConfig.apiKey || '',
+                                model: parsed.aiConfig.model || defaultAiConfig.gemini.model
+                            }
+                        };
+                    }
+                } else {
+                    // 新版结构，深度合并，确保子对象存在
+                    migratedAiConfig = {
+                        provider: parsed.aiConfig.provider || defaultAiConfig.provider,
+                        gemini: { ...defaultAiConfig.gemini, ...(parsed.aiConfig.gemini || {}) },
+                        custom: { ...defaultAiConfig.custom, ...(parsed.aiConfig.custom || {}) }
+                    };
+                }
+            }
+
             return {
                 ...defaultConfig,
                 ...parsed,
                 ports: { ...defaultConfig.ports, ...(parsed.ports || {}) },
                 dictionaries: { ...defaultConfig.dictionaries, ...(parsed.dictionaries || {}) },
-                aiConfig: { ...defaultConfig.aiConfig, ...(parsed.aiConfig || {}) },
+                aiConfig: migratedAiConfig,
                 defaultMetadata: { ...defaultConfig.defaultMetadata, ...(parsed.defaultMetadata || {}) }
             };
         } catch (e) {
@@ -86,6 +121,24 @@ function App() {
     }
     return defaultConfig;
   });
+
+  // 移动 scanDraft 定义到 config 之后，以便引用 config.ports
+  const [scanDraft, setScanDraft] = useState({
+    target: '127.0.0.1',
+    domainStr: '', 
+    // 动态引用配置中的端口集
+    portRange: Array.from(new Set(Object.values(config.ports).join(',').split(',').map(p => p.trim()).filter(p => p))).join(', '),
+    assetName: '',
+    securityLevel: '', 
+    location: '',      
+    evaluator: ''       
+  });
+
+  // 监听配置变化，自动更新扫描表单的端口范围
+  useEffect(() => {
+    const newPorts = Array.from(new Set(Object.values(config.ports).join(',').split(',').map(p => p.trim()).filter(p => p))).join(', ');
+    setScanDraft(prev => ({ ...prev, portRange: newPorts }));
+  }, [config.ports]);
 
   useEffect(() => {
     if (isAuthenticated) {

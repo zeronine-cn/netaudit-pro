@@ -1,3 +1,4 @@
+
 import json
 import os
 
@@ -25,35 +26,54 @@ class SecurityAnalyzer:
         if protocol == "SSH":
             if extra.get("weak_creds"):
                 creds = extra["weak_creds"][0]
+                rule_ssh = self.rules.get("SSH_WEAK_PASS", {})
                 findings.append({
                     "id": f"SSH-PWD-{port}", "protocol": protocol,
-                    "check_item": "系统权限已失陷 (SSH 弱口令)", "risk_level": "高危",
+                    "check_item": rule_ssh.get("name", "系统权限已失陷 (SSH 弱口令)"), "risk_level": "高危",
                     "description": f"成功获取系统登录凭据：{creds['user']} / {creds['pass']}",
                     "detail_value": f"Valid Credential found on port {port}",
-                    "suggestion": "立即修改密码，启用 MFA 认证。", "mlps_clause": "G3-安全计算环境-身份鉴别",
+                    "suggestion": rule_ssh.get("suggestion", "立即修改密码，启用 MFA 认证。"),
+                    "mlps_clause": rule_ssh.get("clause_id", "G3-安全计算环境-身份鉴别"),
                     "metadata": {"is_compromised": True}
                 })
             
             if "ssh" in banner_low and any(v in banner_low for v in ["ubuntu", "debian", "openssh"]):
+                rule_banner = self.rules.get("SSH_BANNER_LEAK", {})
                 findings.append({
                     "id": f"SSH-BANNER-{port}", "protocol": protocol,
-                    "check_item": "SSH 服务版本信息泄露", "risk_level": "低危",
+                    "check_item": rule_banner.get("name", "SSH 服务版本信息泄露"), "risk_level": "低危",
                     "description": "SSH 服务端 Banner 暴露了具体的操作系统或软件版本。",
                     "detail_value": banner,
-                    "suggestion": "修改 sshd_config 设置 DebianBanner no 或使用防火墙限制。",
-                    "mlps_clause": "G3-安全计算环境-入侵防范"
+                    "suggestion": rule_banner.get("suggestion", "修改 sshd_config 设置 DebianBanner no 或使用防火墙限制。"),
+                    "mlps_clause": rule_banner.get("clause_id", "G3-安全计算环境-入侵防范")
                 })
 
-        # 2. Redis: 未授权访问
+        # 2. MySQL
+        if protocol == "MySQL":
+            # 弱口令检测
+            if extra.get("weak_creds"):
+                creds = extra["weak_creds"][0]
+                rule_mysql = self.rules.get("MYSQL_WEAK_PASS", {})
+                findings.append({
+                    "id": f"MYSQL-PWD-{port}", "protocol": protocol,
+                    "check_item": rule_mysql.get("name", "数据库权限失陷 (MySQL 弱口令)"), "risk_level": "高危",
+                    "description": f"成功爆破 MySQL 账号密码：{creds['user']} / {creds['pass']}",
+                    "detail_value": f"Compromised: {creds['user']}",
+                    "suggestion": rule_mysql.get("suggestion", "立即修改高强度密码并限制访问来源。"),
+                    "mlps_clause": rule_mysql.get("clause_id", "G3-安全计算环境-身份鉴别"),
+                    "metadata": {"is_compromised": True, "db_type": "MySQL", "success_user": creds['user'], "success_pass": creds['pass']}
+                })
+
+        # 3. Redis: 未授权访问与危险配置
         if protocol == "Redis":
             res = extra.get("db_results", {})
             if res.get("vulnerable"):
                 findings.append({
                     "id": f"REDIS-UNAUTH-{port}", "protocol": protocol,
-                    "check_item": "数据库未授权访问 (匿名登录)", "risk_level": "高危",
-                    "description": "Redis 服务器未启用密码认证，攻击者可远程执行任意指令并提取数据。",
-                    "detail_value": res.get("detail", ""),
-                    "suggestion": "1. 修改 redis.conf 启用 requirepass；2. 限制 bind 127.0.0.1。",
+                    "check_item": "Redis 未授权访问 / 危险配置", "risk_level": "高危",
+                    "description": res.get("detail", "Redis 服务器未启用密码认证。"),
+                    "detail_value": "Auth disabled",
+                    "suggestion": "1. 修改 redis.conf 启用 requirepass；2. 重命名或禁用 CONFIG/FLUSHALL 指令。",
                     "mlps_clause": "G3-安全计算环境-身份鉴别",
                     "metadata": {"is_compromised": True, "db_type": "Redis"}
                 })
@@ -65,8 +85,39 @@ class SecurityAnalyzer:
                     "detail_value": "Auth Required.", "suggestion": "保持现状。", "mlps_clause": "G3-安全计算环境-身份鉴别"
                 })
 
-        # 3. 数据库通用 (MySQL/PG/Mongo): 服务暴露
-        if protocol in ["MySQL", "PostgreSQL", "MongoDB"]:
+        # 4. PostgreSQL: 认证模式审计
+        if protocol == "PostgreSQL":
+             res = extra.get("db_results", {})
+             if res.get("vulnerable"):
+                 risk_level = "高危" if res.get("type") == "PG_TRUST" else "中危"
+                 findings.append({
+                    "id": f"PG-AUTH-{port}", "protocol": protocol,
+                    "check_item": "PostgreSQL 认证配置风险", "risk_level": risk_level,
+                    "description": res.get("detail", "PostgreSQL 认证配置不当。"),
+                    "detail_value": f"Type: {res.get('type')}",
+                    "suggestion": "修改 pg_hba.conf，禁止 trust 模式，强制使用 md5/scram-sha-256。",
+                    "mlps_clause": "G3-安全计算环境-身份鉴别"
+                 })
+
+        # 5. MongoDB: 未授权审计
+        if protocol == "MongoDB":
+             res = extra.get("db_results", {})
+             if res.get("vulnerable"):
+                 findings.append({
+                    "id": f"MONGO-UNAUTH-{port}", "protocol": protocol,
+                    "check_item": "MongoDB 未授权访问", "risk_level": "高危",
+                    "description": res.get("detail", "无需认证即可执行管理指令。"),
+                    "detail_value": "Auth disabled",
+                    "suggestion": "在配置文件中开启 security.authorization: enabled。",
+                    "mlps_clause": "G3-安全计算环境-访问控制"
+                 })
+
+        # 6. 数据库通用服务暴露 (兜底)
+        # 注意：如果已经发现了弱口令(MySQL)，我们仍可能报告服务暴露，除非业务逻辑要求互斥。
+        # 这里为了保持一致性，如果发现了高危的弱口令，通常可以不再报"端口开放"这种低级别的风险，或者并存。
+        # 下面的逻辑是：如果该协议还没有任何 findings，才报告服务暴露。
+        current_proto_findings = [f for f in findings if f['protocol'] == protocol]
+        if protocol in ["MySQL", "PostgreSQL", "MongoDB"] and not current_proto_findings:
             res = extra.get("db_results", {})
             if res.get("status") == "OPEN":
                 findings.append({
@@ -78,7 +129,7 @@ class SecurityAnalyzer:
                     "mlps_clause": "G3-安全计算环境-入侵防范"
                 })
 
-        # 4. Web 协议 (HTTP/HTTPS): 综合分析
+        # 7. Web 协议 (HTTP/HTTPS): 综合分析
         if protocol in ["HTTP", "HTTPS"]:
             web_res = extra.get("web_results", {})
             tls_res = extra.get("tls_results", {})
@@ -270,7 +321,7 @@ class SecurityAnalyzer:
                         "mlps_clause": "G3-安全通信网络-通信保密性"
                     })
 
-        # 5. DNS 漏洞分析
+        # 8. DNS 漏洞分析
         if protocol == "DNS":
             res = extra.get("dns_results", {})
             if res.get("vulnerable"):
@@ -295,7 +346,7 @@ class SecurityAnalyzer:
                     "mlps_clause": "G3-安全区域边界-访问控制"
                 })
 
-        # 6. 高危/非必要端口判定
+        # 9. 高危/非必要端口判定
         RISKY_PORTS = {
             21: {"name": "FTP", "desc": "明文传输协议，建议使用 SFTP", "risk": "中危"},
             23: {"name": "Telnet", "desc": "明文传输协议，完全不安全，建议使用 SSH", "risk": "高危"},
@@ -308,7 +359,7 @@ class SecurityAnalyzer:
             27017: {"name": "MongoDB", "desc": "NoSQL 数据库，默认配置可能存在未授权访问", "risk": "中危"}
         }
 
-        if port in RISKY_PORTS:
+        if port in RISKY_PORTS and not any(f['protocol'] in ['MongoDB'] for f in findings):
             info = RISKY_PORTS[port]
             rule_tcp = self.rules.get("TCP_PORT_OPEN", {})
             findings.append({
@@ -322,7 +373,7 @@ class SecurityAnalyzer:
                 "mlps_clause": rule_tcp.get("clause_id", "G3-安全区域边界-访问控制")
             })
 
-        # 7. 兜底
+        # 10. 兜底
         if not findings:
             findings.append({
                 "id": f"PORT-{port}", "protocol": protocol, "check_item": "常规端口开放", 

@@ -53,7 +53,7 @@ export const performScan = async (
 
     const statusUrl = getApiUrl(apiBaseUrl, `/api/scan/status/${task_id}`);
     
-    const MAX_POLLS = 3000; // 增加最大轮询次数防止超时
+    const MAX_POLLS = 6000; // 增加最大轮询次数防止超时
     let polls = 0;
 
     while (polls < MAX_POLLS) {
@@ -81,8 +81,8 @@ export const performScan = async (
       }
 
       polls++;
-      // 缩短轮询间隔，让前端日志跳动更频繁
-      await new Promise(resolve => setTimeout(resolve, 600));
+      // 优化：将轮询间隔缩短至 250ms，大幅提升日志流畅度，配合后端微延时确保不丢日志
+      await new Promise(resolve => setTimeout(resolve, 250));
     }
 
     throw new Error("扫描任务执行超时。");

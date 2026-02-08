@@ -96,6 +96,14 @@
     "description": "通过字典攻击成功获取了 SSH 登录凭证，攻击者可直接接管服务器。",
     "suggestion": "1. 立即修改密码，长度>10位，包含大小写、数字及符号；2. 建议禁用密码登录，改用 SSH 密钥认证。"
   },
+  "MYSQL_WEAK_PASS": {
+    "name": "MySQL 弱口令漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "应对登录用户进行身份标识和鉴别，身份鉴别信息应具有复杂度要求并定期更换。",
+    "description": "通过字典攻击成功获取了 MySQL 数据库的登录凭证，攻击者可获取数据库所有权限。",
+    "suggestion": "1. 立即修改数据库密码，设置为强密码；2. 禁止 root 用户远程登录；3. 限制数据库端口访问 IP。"
+  },
   "SSH_BANNER_LEAK": {
     "name": "SSH 服务版本泄露",
     "risk_level": "Low",

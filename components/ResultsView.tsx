@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { ScanReport, RiskLevel, Protocol, AppConfig } from '../types';
-import { AlertTriangle, ChevronDown, ChevronRight, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon, FileCode, FileText } from 'lucide-react';
 import { generateAIAdvice } from '../services/aiService';
 
 interface ResultsViewProps {
@@ -87,6 +87,55 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
     setIsAiLoading(false);
   };
 
+  const handleDownloadMD = () => {
+    if (!aiResult || !report) return;
+    const blob = new Blob([aiResult], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AI_Audit_${report.target}_${new Date().toISOString().split('T')[0]}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadWord = () => {
+    if (!aiResult || !report) return;
+    // 简单的 Markdown 转 HTML 用于 Word 导出
+    let htmlContent = aiResult
+      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+      .replace(/\*\*(.*?)\*\*/gim, '<b>$1</b>')
+      .replace(/\*(.*?)\*/gim, '<i>$1</i>')
+      .replace(/- (.*$)/gim, '<li>$1</li>')
+      .replace(/\n/gim, '<br>');
+
+    const fullHtml = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head><meta charset='utf-8'><title>AI 审计报告</title></head>
+      <body style="font-family: 'Microsoft YaHei', sans-serif;">
+        <h1 style="text-align:center;">AI 审计顾问意见书</h1>
+        <p><b>资产目标:</b> ${report.target}</p>
+        <p><b>生成时间:</b> ${new Date().toLocaleString()}</p>
+        <hr/>
+        ${htmlContent}
+      </body>
+      </html>
+    `;
+    
+    const blob = new Blob([fullHtml], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AI_Audit_${report.target}_${new Date().toISOString().split('T')[0]}.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
@@ -138,9 +187,26 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
               <h3 className="text-xl font-black italic uppercase flex items-center gap-3 text-indigo-400">
                 <MessageSquareText size={22} /> AI 审计顾问意见书
               </h3>
-              <button onClick={() => setAiResult(null)} className="p-2 hover:bg-white/5 rounded-full transition-colors">
-                <X size={16} className="text-white/20" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleDownloadMD} 
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white/40 hover:text-white"
+                  title="导出 Markdown (.md)"
+                >
+                  <FileCode size={18} />
+                </button>
+                <button 
+                  onClick={handleDownloadWord} 
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white/40 hover:text-white"
+                  title="导出 Word (.doc)"
+                >
+                  <FileText size={18} />
+                </button>
+                <div className="w-px h-4 bg-white/10 mx-1"></div>
+                <button onClick={() => setAiResult(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white">
+                  <X size={18} />
+                </button>
+              </div>
            </div>
            <div className="prose prose-invert prose-indigo max-w-none font-bold text-sm text-white/70 leading-relaxed italic whitespace-pre-wrap">
               {aiResult}
@@ -150,7 +216,8 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
 
       <div className="space-y-6">
         {report.defects.map((defect: any) => {
-          const isCompromised = defect.id.includes('SSH-PWD') || (defect.protocol === Protocol.SSH && defect.risk_level === RiskLevel.HIGH);
+          // 关键修改：将 MYSQL-PWD 也纳入 isCompromised 判断，使其获得“凭据失陷”的高危样式
+          const isCompromised = defect.id.includes('SSH-PWD') || defect.id.includes('MYSQL-PWD') || (defect.protocol === Protocol.SSH && defect.risk_level === RiskLevel.HIGH);
           
           return (
             <div key={defect.id} className={`tactical-card overflow-hidden rounded-3xl border transition-all ${isCompromised ? 'border-danger/50 bg-danger/5' : 'border-white/5'}`}>

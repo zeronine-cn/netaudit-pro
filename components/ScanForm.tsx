@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Play, Loader2, Network, Globe, Radio, Box, Crosshair, History, ChevronRight, FileEdit, MapPin, UserCog, ChevronDown, ChevronUp, ShieldAlert, Zap, StopCircle, Trash2 } from 'lucide-react';
+import { Terminal, Play, Loader2, Network, Globe, Radio, Box, Crosshair, History, ChevronRight, FileEdit, MapPin, UserCog, ChevronDown, ChevronUp, ShieldAlert, Zap, StopCircle, Trash2, Server, Database, Lock, Globe2 } from 'lucide-react';
 import { performScan } from '../services/scanService';
 import { ScanReport, AppConfig, ScanMode } from '../types';
 
@@ -17,6 +17,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const [isScanning, setIsScanning] = useState(false);
   const [scanMode, setScanMode] = useState<ScanMode>(ScanMode.QUICK);
   const [enableBrute, setEnableBrute] = useState(false);
+  const [bruteProtocols, setBruteProtocols] = useState<string[]>(['SSH', 'MySQL']);
   const [progress, setProgress] = useState(0);
   const [currentAction, setCurrentAction] = useState("");
   const [showHistoryPopup, setShowHistoryPopup] = useState(false);
@@ -29,6 +30,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef({ cancelled: false });
   const hideTimeoutRef = useRef<number | null>(null);
+  const lastLogRef = useRef<string>("");
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -76,6 +78,12 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     }, 150);
   };
 
+  const toggleBruteProtocol = (proto: string) => {
+    setBruteProtocols(prev => 
+      prev.includes(proto) ? prev.filter(p => p !== proto) : [...prev, proto]
+    );
+  };
+
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isScanning) return;
@@ -85,6 +93,7 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
     setProgress(0);
     setCurrentAction("正在校准审计引擎...");
     abortRef.current.cancelled = false;
+    lastLogRef.current = "";
 
     const domains = draft.domainStr.split(',').map(d => d.trim()).filter(d => d);
     
@@ -97,9 +106,13 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
 
     const startTime = new Date().toLocaleTimeString('zh-CN', { hour12: false });
     addLog(`---------------- SESSION START [${startTime}] ----------------`, 'system');
-    addLog(`KERNEL: 初始化审计内核 v3.1...`, 'info');
+    addLog(`KERNEL: 初始化审计内核 v3.2...`, 'info');
     addLog(`ASSET: ${metadata.assetName} | LEVEL: ${metadata.securityLevel}`, 'info');
     addLog(`TARGET: ${draft.target}`, 'info');
+    
+    if (enableBrute) {
+      addLog(`BRUTE: 已启用弱口令爆破 [${bruteProtocols.join(', ')}]`, 'warn');
+    }
     
     try {
       const report = await performScan(
@@ -111,11 +124,23 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
         domains,
         scanMode,
         enableBrute,
+        bruteProtocols,
         (pct, log) => {
           setProgress(pct);
           setCurrentAction(log);
-          if (pct > 0 && pct % 20 === 0 && pct < 100) {
-            addLog(`[CORE] 审计进度已同步: ${pct}% - ${log}`, 'info');
+          
+          // 核心修改：移除百分比限制，实时显示不重复的日志
+          if (log && log !== lastLogRef.current) {
+            lastLogRef.current = log;
+            
+            // 简单的日志类型自动推断
+            let type: 'info' | 'warn' | 'error' | 'success' | 'system' = 'info';
+            if (log.includes('[+]') || log.includes('Success')) type = 'success';
+            else if (log.includes('[!]') || log.includes('Refused') || log.includes('Error') || log.includes('Vulnerability')) type = 'warn';
+            else if (log.includes('[-]')) type = 'info';
+            else if (log.includes('[*]')) type = 'info';
+            
+            addLog(log, type);
           }
         },
         abortRef.current,
@@ -176,189 +201,256 @@ const ScanForm: React.FC<ScanFormProps> = ({ onScanComplete, config, draft, setD
                       value={draft.target} 
                       onChange={e => handleUpdateDraft('target', e.target.value)} 
                       disabled={isScanning} 
-                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-sm font-bold focus:border-brand/40 outline-none transition-all mono text-white/90" 
+                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-white font-bold mono focus:border-brand/50 outline-none transition-all placeholder:text-white/10"
                       placeholder="127.0.0.1" 
                     />
-                    <Network className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={16} />
+                    <Network className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-hover:text-brand transition-colors" size={16} />
+                    
+                    {/* 历史记录悬浮窗 */}
+                    {showHistoryPopup && targetHistory.length > 0 && (
+                      <div className="absolute top-full left-0 w-full mt-2 bg-black/90 border border-white/10 rounded-xl p-2 z-50 backdrop-blur-xl shadow-2xl animate-in fade-in slide-in-from-top-2">
+                         <div className="flex items-center gap-2 px-3 py-2 text-[8px] font-black uppercase text-white/20 border-b border-white/5 mb-1">
+                           <History size={10} /> 最近目标
+                         </div>
+                         {targetHistory.map((ip, idx) => (
+                           <div 
+                             key={idx} 
+                             onClick={() => handleUpdateDraft('target', ip)}
+                             className="px-3 py-2 hover:bg-white/10 rounded-lg cursor-pointer text-xs font-mono text-white/60 hover:text-brand transition-colors flex justify-between items-center group/item"
+                           >
+                             {ip}
+                             <ChevronRight size={12} className="opacity-0 group-hover/item:opacity-100 transition-opacity" />
+                           </div>
+                         ))}
+                      </div>
+                    )}
                   </div>
-                  {showHistoryPopup && targetHistory.length > 0 && !isScanning && (
-                    <div className="absolute top-full left-0 w-full z-[100] pt-2">
-                      <div className="bg-black/95 backdrop-blur-2xl border border-brand/20 rounded-2xl p-3 shadow-2xl">
-                        {targetHistory.map((ip, idx) => (
-                          <button key={idx} onClick={() => { handleUpdateDraft('target', ip); setShowHistoryPopup(false); }} className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl hover:bg-brand hover:text-black transition-all group/item mb-1">
-                            <span className="text-[10px] font-mono font-bold">{ip}</span>
-                            <ChevronRight size={10} />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* 定级备案面板 */}
-                <div className="border border-white/5 rounded-2xl overflow-hidden bg-white/[0.02]">
-                  <button 
-                    onClick={() => setShowMetadata(!showMetadata)}
-                    className={`w-full px-4 py-3.5 flex items-center justify-between hover:bg-white/5 transition-all ${showMetadata ? 'bg-white/5' : ''}`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <FileEdit size={14} className="text-brand/60" />
-                      <span className="text-[9px] font-black uppercase tracking-0.2em text-white/40 italic">测评对象画像</span>
-                    </div>
-                    {showMetadata ? <ChevronUp size={14} className="text-white/20" /> : <ChevronDown size={14} className="text-white/20" />}
-                  </button>
-                  {showMetadata && (
-                    <div className="p-5 pt-1 space-y-4 animate-in slide-in-from-top-4 duration-300">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[8px] font-black uppercase text-white/20 tracking-widest block ml-1">资产名称</label>
-                          <div className="relative">
-                            <input value={draft.assetName} onChange={e => handleUpdateDraft('assetName', e.target.value)} className="w-full pl-8 py-2.5 bg-black/40 border border-white/10 rounded-lg text-[9px] font-bold text-white outline-none" placeholder="自动填充..." />
-                            <Box className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/10" size={12} />
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[8px] font-black uppercase text-white/20 tracking-widest block ml-1">等保等级</label>
-                          <select value={draft.securityLevel} onChange={e => handleUpdateDraft('securityLevel', e.target.value)} className="w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-lg text-[9px] font-bold text-brand outline-none appearance-none">
-                            <option value="">跟随模板</option>
-                            <option value="三级">等保三级 (L3)</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* 关联域名 */}
-                <div className="relative group">
-                  <label className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 mb-1.5 px-1 block">关联域名</label>
-                  <div className="relative">
-                    <textarea 
+                <div>
+                  <label className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 mb-1.5 px-1 block">关联域名 (VHost)</label>
+                  <div className="relative group">
+                    <input 
                       value={draft.domainStr} 
                       onChange={e => handleUpdateDraft('domainStr', e.target.value)} 
                       disabled={isScanning} 
-                      rows={2} 
-                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-[11px] font-bold focus:border-brand/40 outline-none transition-all mono text-white/90 resize-none" 
-                      placeholder="example.com" 
+                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-white font-bold mono focus:border-brand/50 outline-none transition-all placeholder:text-white/10"
+                      placeholder="example.com, api.site.org" 
                     />
-                    <Globe className="absolute left-4 top-4 text-white/20" size={16} />
+                    <Globe className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-hover:text-brand transition-colors" size={16} />
                   </div>
                 </div>
 
-                {/* 审计深度 */}
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 px-1 block">引擎深度</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[ScanMode.QUICK, ScanMode.DEEP].map(mode => (
-                      <button 
-                        key={mode} 
-                        onClick={() => setScanMode(mode)} 
-                        className={`py-2.5 rounded-xl text-[9px] font-black uppercase italic tracking-widest border transition-all ${scanMode === mode ? 'bg-brand text-black border-brand shadow-[0_0_15px_rgba(204,255,0,0.2)]' : 'bg-white/5 text-white/30 border-white/10 hover:bg-white/10'}`}
-                      >
-                        {mode}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 弱口令开关 */}
-                <div className={`p-4 rounded-xl border transition-all flex items-center justify-between ${enableBrute ? 'bg-brand/5 border-brand/30' : 'bg-white/5 border-white/10'} ${scanMode === ScanMode.QUICK ? 'opacity-20 pointer-events-none' : 'cursor-pointer'}`} onClick={() => !isScanning && setEnableBrute(!enableBrute)}>
-                  <div className="flex items-center gap-3">
-                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${enableBrute ? 'bg-brand text-black' : 'bg-white/10 text-white/30'}`}>
-                        <ShieldAlert size={14} />
-                     </div>
-                     <div className="text-[9px] font-black text-white/80 uppercase">弱口令扫描</div>
-                  </div>
-                  <div className={`w-8 h-4 rounded-full relative transition-all ${enableBrute ? 'bg-brand' : 'bg-white/10'}`}>
-                     <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${enableBrute ? 'left-4.5' : 'left-0.5'}`}></div>
-                  </div>
-                </div>
-
-                {/* 端口范围 */}
-                <div className="relative group">
-                  <label className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 mb-1.5 px-1 block">探测端口集</label>
-                  <div className="relative">
+                {/* 端口配置 */}
+                <div>
+                  <label className="text-[9px] font-black uppercase tracking-[0.3em] text-white/20 mb-1.5 px-1 block">端口扫描范围</label>
+                  <div className="relative group">
                     <input 
                       value={draft.portRange} 
                       onChange={e => handleUpdateDraft('portRange', e.target.value)} 
                       disabled={isScanning} 
-                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-sm font-bold focus:border-brand/40 outline-none transition-all mono text-white/90" 
+                      className="w-full pl-11 pr-6 py-3.5 bg-white/[0.03] border border-white/10 rounded-xl text-white font-bold mono focus:border-brand/50 outline-none transition-all placeholder:text-white/10 truncate"
                     />
-                    <Radio className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20" size={16} />
+                    <Radio className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20 group-hover:text-brand transition-colors" size={16} />
                   </div>
                 </div>
+
+                {/* 高级信息折叠 */}
+                <div className="pt-2">
+                   <button 
+                     type="button"
+                     onClick={() => setShowMetadata(!showMetadata)}
+                     className="flex items-center gap-2 text-[9px] font-black uppercase text-white/30 hover:text-white transition-colors tracking-widest"
+                   >
+                     {showMetadata ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                     资产画像元数据 (Metadata)
+                   </button>
+                   
+                   {showMetadata && (
+                     <div className="grid grid-cols-2 gap-3 mt-3 animate-in slide-in-from-top-2">
+                        <div className="relative">
+                           <input value={draft.assetName} onChange={e => handleUpdateDraft('assetName', e.target.value)} placeholder="资产名称" className="w-full pl-8 pr-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg text-xs text-white focus:border-white/20 outline-none" />
+                           <Box size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" />
+                        </div>
+                        <div className="relative">
+                           <input value={draft.securityLevel} onChange={e => handleUpdateDraft('securityLevel', e.target.value)} placeholder="等保等级" className="w-full pl-8 pr-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg text-xs text-white focus:border-white/20 outline-none" />
+                           <ShieldAlert size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" />
+                        </div>
+                        <div className="relative">
+                           <input value={draft.location} onChange={e => handleUpdateDraft('location', e.target.value)} placeholder="物理位置" className="w-full pl-8 pr-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg text-xs text-white focus:border-white/20 outline-none" />
+                           <MapPin size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" />
+                        </div>
+                        <div className="relative">
+                           <input value={draft.evaluator} onChange={e => handleUpdateDraft('evaluator', e.target.value)} placeholder="审计负责人" className="w-full pl-8 pr-3 py-2 bg-white/[0.02] border border-white/5 rounded-lg text-xs text-white focus:border-white/20 outline-none" />
+                           <UserCog size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" />
+                        </div>
+                     </div>
+                   )}
+                </div>
+
+                <div className="h-px bg-white/5 my-2"></div>
+
+                {/* 扫描模式 */}
+                <div className="grid grid-cols-2 gap-4">
+                   <div 
+                     onClick={() => !isScanning && setScanMode(ScanMode.QUICK)}
+                     className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col gap-2 ${scanMode === ScanMode.QUICK ? 'bg-white/10 border-white/20' : 'bg-transparent border-white/5 hover:bg-white/5'}`}
+                   >
+                      <div className="flex justify-between items-center">
+                         <span className={`text-[10px] font-black uppercase tracking-widest ${scanMode === ScanMode.QUICK ? 'text-white' : 'text-white/40'}`}>快速探测</span>
+                         {scanMode === ScanMode.QUICK && <div className="w-2 h-2 rounded-full bg-brand"></div>}
+                      </div>
+                      <p className="text-[9px] text-white/30 leading-relaxed">仅进行端口存活探测与基础指纹识别，无侵入性。</p>
+                   </div>
+                   <div 
+                     onClick={() => !isScanning && setScanMode(ScanMode.DEEP)}
+                     className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col gap-2 ${scanMode === ScanMode.DEEP ? 'bg-danger/10 border-danger/40' : 'bg-transparent border-white/5 hover:bg-white/5'}`}
+                   >
+                      <div className="flex justify-between items-center">
+                         <span className={`text-[10px] font-black uppercase tracking-widest ${scanMode === ScanMode.DEEP ? 'text-danger' : 'text-white/40'}`}>深度审计</span>
+                         {scanMode === ScanMode.DEEP && <div className="w-2 h-2 rounded-full bg-danger animate-pulse"></div>}
+                      </div>
+                      <p className="text-[9px] text-white/30 leading-relaxed">执行全量漏洞脚本及弱口令检测，耗时较长。</p>
+                   </div>
+                </div>
+
+                {/* 弱口令爆破开关与协议选择 */}
+                {scanMode === ScanMode.DEEP && (
+                  <div className="space-y-4">
+                    <div 
+                      onClick={() => !isScanning && setEnableBrute(!enableBrute)}
+                      className={`flex items-center justify-between p-4 rounded-xl border cursor-pointer transition-all ${enableBrute ? 'bg-orange-500/10 border-orange-500/30' : 'bg-white/[0.02] border-white/5'}`}
+                    >
+                      <div className="flex items-center gap-3">
+                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${enableBrute ? 'bg-orange-500 text-black' : 'bg-white/5 text-white/20'}`}>
+                           <Terminal size={16} />
+                         </div>
+                         <div>
+                            <div className={`text-xs font-black uppercase ${enableBrute ? 'text-orange-500' : 'text-white/40'}`}>弱口令爆破模块</div>
+                            <div className="text-[8px] font-bold text-white/20 mt-0.5">字典攻击 (Brute-Force)</div>
+                         </div>
+                      </div>
+                      <div className={`w-10 h-5 rounded-full relative transition-colors ${enableBrute ? 'bg-orange-500' : 'bg-white/10'}`}>
+                         <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${enableBrute ? 'left-6' : 'left-1'}`}></div>
+                      </div>
+                    </div>
+                    
+                    {/* 协议选择矩阵 */}
+                    {enableBrute && (
+                      <div className="flex items-center gap-4 px-3 py-2 animate-in slide-in-from-top-2 bg-white/[0.02] border border-white/5 rounded-xl">
+                         <span className="text-[9px] font-bold text-white/30 uppercase tracking-wide shrink-0">目标协议:</span>
+                         <div className="flex flex-wrap gap-2">
+                           {['SSH', 'MySQL'].map(proto => (
+                             <button
+                               key={proto}
+                               type="button"
+                               onClick={() => !isScanning && toggleBruteProtocol(proto)}
+                               className={`px-3 py-1.5 rounded-lg border text-[9px] font-black uppercase transition-all flex items-center gap-2 ${
+                                 bruteProtocols.includes(proto)
+                                 ? 'bg-orange-500 text-black border-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.3)]'
+                                 : 'bg-white/5 text-white/30 border-white/10 hover:border-white/20'
+                               }`}
+                             >
+                               {bruteProtocols.includes(proto) && <div className="w-1.5 h-1.5 rounded-full bg-black"></div>}
+                               {proto}
+                             </button>
+                           ))}
+                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Submit */}
-            <div className="pt-4">
+            {/* Action Button */}
+            <button
+              onClick={isScanning ? handleStopScan : handleScan}
+              disabled={false}
+              className={`w-full py-6 rounded-2xl flex items-center justify-center gap-3 text-sm font-black uppercase italic tracking-wider transition-all shadow-lg hover:shadow-xl active:scale-[0.98] ${
+                isScanning 
+                  ? 'bg-danger text-white shadow-danger/20 hover:bg-red-600' 
+                  : 'bg-brand text-black shadow-brand/20 hover:bg-brand/90'
+              }`}
+            >
               {isScanning ? (
-                <button onClick={handleStopScan} className="w-full py-5 rounded-2xl text-md font-black uppercase italic flex items-center justify-center gap-4 bg-danger/20 text-danger border border-danger/40 hover:bg-danger hover:text-white transition-all">
-                  <StopCircle size={20} />
-                  <span>中止审计</span>
-                </button>
+                <>
+                  <StopCircle size={18} className="animate-pulse" />
+                  中止审计作业
+                </>
               ) : (
-                <button onClick={handleScan} className="w-full py-5 rounded-2xl text-md font-black uppercase italic flex items-center justify-center gap-4 bg-brand text-black hover:shadow-[0_0_30px_rgba(204,255,0,0.4)] transition-all">
-                  <Play fill="currentColor" size={16} />
-                  <span>开始审计</span>
-                </button>
+                <>
+                  <Play size={18} fill="currentColor" />
+                  立即执行审计
+                </>
               )}
-            </div>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* 右侧日志面板 - 固定高度与内部滚动 */}
+      {/* 右侧日志终端 - 自适应宽度 */}
       <div className="lg:col-span-7 h-[750px]">
-        <div className="tactical-card h-full flex flex-col overflow-hidden rounded-[2.5rem] border border-white/10 bg-obsidian/40 shadow-2xl relative">
+        <div className="tactical-card rounded-[2.5rem] bg-black border border-white/10 h-full flex flex-col overflow-hidden shadow-2xl relative">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand via-white to-brand opacity-20"></div>
+          
           {/* Terminal Header */}
-          <div className="px-8 py-4 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
+          <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-white/[0.02]">
              <div className="flex items-center gap-3">
-               <div className="w-1.5 h-1.5 rounded-full bg-brand animate-pulse"></div>
-               <span className="font-black uppercase tracking-[0.4em] text-[9px] text-white/40 italic">引擎终端 (V3.1-STABLE)</span>
+                <div className="flex gap-1.5">
+                   <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
+                   <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
+                   <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
+                </div>
+                <span className="text-[10px] font-mono text-white/40 ml-2">root@netaudit-kernel:~# scan_engine_v3.2</span>
              </div>
-             <button onClick={handleClearLogs} className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-danger/20 hover:text-danger text-[8px] font-black uppercase tracking-widest transition-all text-white/20 border border-transparent hover:border-danger/20">
-               <Trash2 size={10} /> 清除
+             <button onClick={handleClearLogs} className="text-white/20 hover:text-white transition-colors">
+                <Trash2 size={14} />
              </button>
           </div>
 
-          {/* Log Area - 核心滚动区 */}
-          <div ref={scrollRef} className="p-8 font-mono text-[10px] flex-1 overflow-y-auto bg-black/60 custom-scrollbar scanline-container">
-            {logs.length === 0 && !isScanning && (
-              <div className="h-full flex flex-col items-center justify-center space-y-6 opacity-10">
-                <Terminal size={48} strokeWidth={1} className="animate-pulse" />
-                <span className="font-black uppercase tracking-[1.5em] text-xs">Waiting for Task</span>
-              </div>
-            )}
-            
-            <div className="space-y-2.5 pb-10">
-              {logs.map((log, i) => (
-                <div key={i} className={`flex gap-4 animate-in slide-in-from-left-4 duration-300 ${getLogColor(log.type)}`}>
-                  {log.type !== 'system' && <span className="opacity-10 shrink-0 font-black text-[8px] pt-0.5">[{i.toString().padStart(3, '0')}]</span>}
-                  <span className="leading-relaxed flex-1 break-all whitespace-pre-wrap">{log.msg}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 进度条 - 固定在终端底部 */}
+          {/* Progress Bar Area */}
           {isScanning && (
-            <div className="px-8 py-6 bg-brand/[0.02] border-t border-white/5 shrink-0 animate-in slide-in-from-bottom-4">
-              <div className="flex justify-between items-center mb-4">
-                <div className="flex items-center gap-3">
-                  <Zap size={14} className="text-brand animate-pulse" />
-                  <span className="text-[10px] font-black text-brand uppercase tracking-[0.2em] italic">内核作业中...</span>
-                </div>
-                <span className="text-[11px] font-mono text-brand font-black tracking-widest">{progress}%</span>
-              </div>
-              <div className="text-white/80 font-black text-[10px] mb-4 uppercase italic tracking-tight truncate">
-                {currentAction}
-              </div>
-              <div className="h-2 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
-                <div className="h-full bg-brand shadow-[0_0_15px_#CCFF00] transition-all duration-500 rounded-full" style={{ width: `${progress}%` }}></div>
-              </div>
+            <div className="px-6 pt-6 pb-2">
+               <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-brand mb-2">
+                  <span>Task Progress</span>
+                  <span>{progress}%</span>
+               </div>
+               <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-brand shadow-[0_0_15px_rgba(204,255,0,0.5)] transition-all duration-300 ease-out" 
+                    style={{ width: `${progress}%` }}
+                  ></div>
+               </div>
+               <div className="mt-2 text-[10px] font-mono text-white/50 truncate flex items-center gap-2">
+                  <Loader2 size={10} className="animate-spin" />
+                  {currentAction}
+               </div>
             </div>
           )}
+
+          {/* Console Logs */}
+          <div 
+            ref={scrollRef}
+            className="flex-1 p-6 overflow-y-auto font-mono text-xs space-y-2 custom-scrollbar scroll-smooth"
+          >
+            {logs.length === 0 && (
+               <div className="h-full flex flex-col items-center justify-center opacity-20 select-none">
+                  <Terminal size={48} className="mb-4" />
+                  <p className="uppercase tracking-[0.3em] font-black text-[10px]">系统日志待机中</p>
+               </div>
+            )}
+            {logs.map((log, i) => (
+              <div key={i} className={`leading-relaxed break-all ${getLogColor(log.type)} animate-in fade-in slide-in-from-left-2 duration-300`}>
+                <span className="opacity-30 mr-3">[{new Date().toLocaleTimeString('zh-CN', { hour12: false })}]</span>
+                {log.msg}
+              </div>
+            ))}
+            {isScanning && (
+               <div className="h-4 w-2 bg-brand animate-pulse inline-block align-middle ml-1"></div>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -71,6 +71,12 @@ export interface ScanReport {
   };
 }
 
+export interface AIProviderConfig {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
 export interface AppConfig {
   apiBaseUrl: string;
   adminPassword?: string;
@@ -93,9 +99,8 @@ export interface AppConfig {
   };
   aiConfig: {
     provider: 'gemini' | 'custom';
-    baseUrl: string;
-    apiKey?: string;
-    model: string;
+    gemini: AIProviderConfig;
+    custom: AIProviderConfig;
   };
   defaultMetadata: {
     securityLevel: string;

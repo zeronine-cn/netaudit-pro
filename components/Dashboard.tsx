@@ -1,8 +1,8 @@
 
-import React, { useEffect, useState } from 'react';
-import { Clock, Fingerprint, Activity, ShieldCheck, Zap, TrendingUp } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Clock, Fingerprint, Activity, ShieldCheck, Zap, TrendingUp, History } from 'lucide-react';
 import { ScanReport } from '../types';
-import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer } from 'recharts';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine } from 'recharts';
 
 interface DashboardProps {
   report: ScanReport | null;
@@ -10,13 +10,43 @@ interface DashboardProps {
   onSelectReport: (report: ScanReport) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ report }) => {
+const Dashboard: React.FC<DashboardProps> = ({ report, scanHistory }) => {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // 计算趋势数据
+  const trendData = useMemo(() => {
+    if (!report) return [];
+    
+    // 1. 筛选当前目标的历史记录
+    // 2. 确保包含当前报告（防止还没同步到 history 时显示缺失）
+    const relatedReports = scanHistory.filter(r => r.target === report.target);
+    const combined = [...relatedReports];
+    
+    // 如果当前报告不在历史记录中（通过时间戳简单去重），则添加进去以便显示最新点
+    if (!combined.find(r => r.timestamp === report.timestamp)) {
+        combined.push(report);
+    }
+
+    // 3. 按时间正序排列并格式化
+    return combined
+      .sort((a, b) => new Date(a.timestamp.replace(' ', 'T')).getTime() - new Date(b.timestamp.replace(' ', 'T')).getTime())
+      .map(r => {
+        // 格式化时间轴标签：只显示 月-日 时:分
+        const dateObj = new Date(r.timestamp.replace(' ', 'T'));
+        const shortTime = `${dateObj.getMonth() + 1}/${dateObj.getDate()} ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+        return {
+          originalTime: r.timestamp,
+          time: shortTime,
+          score: r.score,
+          highRisks: r.summary.high
+        };
+      });
+  }, [report, scanHistory]);
 
   if (!report) {
     return (
@@ -107,6 +137,84 @@ const Dashboard: React.FC<DashboardProps> = ({ report }) => {
                <p className="text-[9px] font-bold text-brand uppercase leading-tight italic">
                  建议: 优先修复端口 {report.port_statuses.find(p => p.protocol === 'HTTP')?.port || '80'} 的版本泄露问题。
                </p>
+            </div>
+         </div>
+
+         {/* 新增：安全评分趋势遥测图 */}
+         <div className="tactical-card md:col-span-12 p-8 rounded-[2.5rem] relative overflow-hidden min-h-[350px] flex flex-col border border-white/10">
+            {/* 头部信息 */}
+            <div className="flex justify-between items-start mb-6 z-10">
+               <div>
+                  <h3 className="text-xl font-black italic uppercase flex items-center gap-3">
+                     <History size={24} className="text-brand" /> 
+                     资产安全评分走势 (SECURITY TREND)
+                  </h3>
+                  <p className="text-[10px] font-bold text-white/30 uppercase tracking-[0.2em] mt-1 flex items-center gap-2">
+                     <span className="w-1.5 h-1.5 rounded-full bg-brand/50"></span>
+                     TARGET NODE: {report.target}
+                     <span className="w-px h-3 bg-white/10"></span>
+                     DATAPOINTS: {trendData.length}
+                  </p>
+               </div>
+               
+               {/* 简易图例 */}
+               <div className="flex items-center gap-4 text-[9px] font-black uppercase text-white/30">
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-1 bg-[#CCFF00]"></div> 评分曲线</div>
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-1 border-t border-dashed border-[#ff004c]"></div> 60分警戒线</div>
+               </div>
+            </div>
+
+            {/* 核心图表区 */}
+            <div className="flex-1 w-full h-[240px] relative z-10">
+               <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                     <defs>
+                        <linearGradient id="colorScore" x1="0" y1="0" x2="0" y2="1">
+                           <stop offset="5%" stopColor="#CCFF00" stopOpacity={0.3}/>
+                           <stop offset="95%" stopColor="#CCFF00" stopOpacity={0}/>
+                        </linearGradient>
+                     </defs>
+                     <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" vertical={false} />
+                     <XAxis 
+                        dataKey="time" 
+                        stroke="#ffffff40" 
+                        tick={{fontSize: 10, fontFamily: 'monospace'}} 
+                        tickLine={false}
+                        axisLine={false}
+                        interval="preserveStartEnd"
+                     />
+                     <YAxis 
+                        stroke="#ffffff40" 
+                        tick={{fontSize: 10, fontFamily: 'monospace'}} 
+                        tickLine={false}
+                        axisLine={false}
+                        domain={[0, 100]}
+                     />
+                     <Tooltip 
+                        contentStyle={{ backgroundColor: '#050505ee', border: '1px solid #333', borderRadius: '12px', boxShadow: '0 0 20px rgba(0,0,0,0.8)' }}
+                        itemStyle={{ color: '#CCFF00', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}
+                        labelStyle={{ color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '1px' }}
+                        cursor={{ stroke: '#CCFF00', strokeWidth: 1, strokeDasharray: '4 4' }}
+                        formatter={(value: number) => [`${value} 分`, '安全评分']}
+                     />
+                     <ReferenceLine y={60} stroke="#ff004c" strokeDasharray="3 3" label={{ position: 'insideTopRight', value: 'PASS LINE (60)', fill: '#ff004c', fontSize: 9, fontWeight: 900 }} />
+                     <Area 
+                        type="monotone" 
+                        dataKey="score" 
+                        stroke="#CCFF00" 
+                        strokeWidth={3}
+                        fillOpacity={1} 
+                        fill="url(#colorScore)" 
+                        animationDuration={1500}
+                        activeDot={{ r: 6, strokeWidth: 0, fill: '#fff' }}
+                     />
+                  </AreaChart>
+               </ResponsiveContainer>
+            </div>
+            
+            {/* 背景装饰网格 */}
+            <div className="absolute inset-0 opacity-5 pointer-events-none">
+               <div className="w-full h-full bg-[linear-gradient(to_right,rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.1)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
             </div>
          </div>
       </div>

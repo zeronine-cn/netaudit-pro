@@ -6,3 +6,4 @@ requests
 paramiko
 dnspython
 cryptography
+pymysql
