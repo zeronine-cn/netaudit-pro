@@ -41,6 +41,21 @@ const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
 
   const meta = getResolvedMeta();
 
+  // 辅助函数：生成统一的文件名
+  // 格式: NetAudit_[资产名称]_[IP]_[YYYYMMDD].[ext]
+  const generateFilename = (extension: string) => {
+    if (!report) return `NetAudit_Report.${extension}`;
+    
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    
+    const safeIp = formatIP(report.target).replace(/\./g, '_');
+    // 移除文件名中的非法字符，并将空格替换为下划线
+    const safeAssetName = meta.assetName.replace(/\s+/g, '_').replace(/[\\/:*?"<>|]/g, '');
+    
+    return `NetAudit_${safeAssetName}_${safeIp}_${dateStr}.${extension}`;
+  };
+
   // 辅助函数：按 MLPS 域分组缺陷
   const groupDefectsByDomain = () => {
     if (!report) return {};
@@ -76,7 +91,20 @@ const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
 
   // 使用原生浏览器打印，获取矢量级完美 PDF
   const handlePrint = () => {
+    // 1. 保存当前网页标题
+    const originalTitle = document.title;
+    
+    // 2. 临时修改网页标题为想要的文件名 (去掉 .pdf 后缀，浏览器会自动加)
+    const printTitle = generateFilename('pdf').replace('.pdf', '');
+    document.title = printTitle;
+
+    // 3. 唤起打印
     window.print();
+
+    // 4. 打印窗口关闭后(或延时)恢复原标题
+    setTimeout(() => {
+      document.title = originalTitle;
+    }, 1000);
   };
 
   const downloadMarkdown = () => {
@@ -117,7 +145,7 @@ ${report.defects.map(d => `
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `NetAudit_${targetIp.replace(/\./g, '_')}.md`;
+    a.download = generateFilename('md'); // 使用统一命名
     a.click();
     setIsExporting(null);
   };
@@ -125,14 +153,13 @@ ${report.defects.map(d => `
   const exportToJson = () => {
     if (!report) return;
     setIsExporting('JSON');
-    const sanitizedIp = formatIP(report.target).replace(/\./g, '_');
     
     setTimeout(() => {
       const dataStr = JSON.stringify(report, null, 2);
       const dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
       const linkElement = document.createElement('a');
       linkElement.setAttribute('href', dataUri);
-      linkElement.setAttribute('download', `NetAudit_${sanitizedIp}.json`);
+      linkElement.setAttribute('download', generateFilename('json')); // 使用统一命名
       linkElement.click();
       setIsExporting(null);
     }, 500);
@@ -156,8 +183,7 @@ ${report.defects.map(d => `
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const sanitizedIp = formatIP(report.target).replace(/\./g, '_');
-      a.download = `NetAudit_Report_${sanitizedIp}_${Date.now()}.docx`;
+      a.download = generateFilename('docx'); // 使用统一命名
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -169,8 +195,6 @@ ${report.defects.map(d => `
       setIsExporting(null);
     }
   };
-
-  // 已移除 PDF_SERVER 方式，因为 window.print() 效果更好且离线
   
   if (!report) {
     return (
@@ -263,8 +287,10 @@ ${report.defects.map(d => `
         {/* 覆盖全局样式，确保打印格式正确 */}
         <style type="text/css" media="print">
            {`
-             @page { size: auto; margin: 0; }
+             @page { size: A4; margin: 0; }
              body { padding: 0; margin: 0; background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+             /* 强制分页类，兼容性增强 */
+             .page-break { page-break-after: always; break-after: page; }
            `}
         </style>
         
@@ -274,8 +300,14 @@ ${report.defects.map(d => `
            style={{ fontFamily: '"SimSun", "Songti SC", serif' }}
         >
           {/* --- 封面页 --- */}
-          <div className="min-h-[260mm] flex flex-col justify-center items-center relative break-after-page">
-             <h1 className="text-[34px] font-bold text-center mb-32 tracking-wider" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>
+          {/* 
+             关键修改：
+             1. 移除 justify-center，改为 pt-[X]mm 来精确控制顶部偏移量。
+             2. 目前设置为 pt-[50mm]，您可以修改这个数值来调整"信息系统安全等级保护测评报告"的上下位置。
+             3. A4 纸高 297mm - 40mm边距 = 257mm。
+          */}
+          <div className="h-[257mm] flex flex-col items-center relative page-break pt-[50mm]">
+             <h1 className="text-[34px] font-bold text-center mb-24 tracking-wider" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>
                信息系统安全等级保护测评报告
              </h1>
 
@@ -318,7 +350,7 @@ ${report.defects.map(d => `
           </div>
 
           {/* --- 第一章：测评结果概述 --- */}
-          <div className="min-h-[50mm] relative break-after-page">
+          <div className="min-h-[50mm] relative page-break">
              <h2 className="text-2xl font-bold mb-8" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>第一章 测评结果概述</h2>
              
              <div className="mb-8 text-base">
