@@ -7,3 +7,4 @@ paramiko
 dnspython
 cryptography
 pymysql
+python-docx

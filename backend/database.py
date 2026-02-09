@@ -2,7 +2,7 @@
 import sqlite3
 import json
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # 确定数据库路径：位于项目根目录下的 data 文件夹内
 # 在 Docker 中通常映射为 /app/data
@@ -79,6 +79,27 @@ def get_all_reports() -> List[Dict[str, Any]]:
         except:
             continue
     return results
+
+def get_report_by_id(report_id: int) -> Optional[Dict[str, Any]]:
+    """根据 ID 获取单个报告"""
+    if not os.path.exists(DB_PATH):
+        return None
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT id, report_json FROM reports WHERE id=?", (report_id,))
+    row = c.fetchone()
+    conn.close()
+    
+    if row:
+        try:
+            report_data = json.loads(row['report_json'])
+            report_data['id'] = row['id']
+            return report_data
+        except:
+            return None
+    return None
 
 def delete_report(report_id: int):
     """删除指定 ID 的报告"""

@@ -1,6 +1,7 @@
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Any
 import uvicorn
@@ -23,6 +24,9 @@ from scanners.web_scan import scan_web_service, fetch_url_headers
 from scanners.sys_scan import check_ssh_banner, brute_force_ssh
 from scanners.db_scan import scan_mysql, scan_redis, scan_postgres, scan_mongodb, brute_force_mysql
 from scanners.dns_scan import check_zone_transfer
+
+# 引入 Word 生成器
+from utils.word_generator import generate_word_report
 
 # 使用 lifespan 替代过时的 on_event
 @asynccontextmanager
@@ -427,6 +431,27 @@ async def delete_history(report_id: int):
 async def purge_history():
     database.purge_reports()
     return {"status": "success"}
+
+@app.post("/api/report/word/{report_id}")
+async def download_word_report(report_id: int):
+    """
+    生成并下载 Word 格式报告
+    """
+    report = database.get_report_by_id(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+        
+    try:
+        word_file = generate_word_report(report)
+        filename = f"NetAudit_{report['target'].replace('.', '_')}_{int(time.time())}.docx"
+        
+        return StreamingResponse(
+            word_file,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 安全配置接口：获取服务器端预设密码（如有）
 @app.get("/api/config/security")

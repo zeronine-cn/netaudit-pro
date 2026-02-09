@@ -1,19 +1,26 @@
 
 import React, { useState } from 'react';
 import { ScanReport, RiskLevel, Protocol, AppConfig } from '../types';
-import { AlertTriangle, ChevronDown, ChevronRight, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon, FileCode, FileText } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, ChevronUp, Server, Shield, Globe, Lock, Activity, Sparkles, Loader2, MessageSquareText, X, Key, Copy, Check, Skull, Target, Search, Database, Radar as RadarIcon, FileCode, FileText } from 'lucide-react';
 import { generateAIAdvice } from '../services/aiService';
 
 interface ResultsViewProps {
   report: ScanReport | null;
   config: AppConfig;
+  cachedAiResult?: string | null;
+  onUpdateAiResult?: (result: string | null) => void;
 }
 
-const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
+const ResultsView: React.FC<ResultsViewProps> = ({ report, config, cachedAiResult, onUpdateAiResult }) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [aiResult, setAiResult] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  
+  // 新增：AI 面板折叠状态，默认为 false (折叠)，既节省空间又满足"想看时再展开"的需求
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState(false);
+
+  // 使用父组件传入的缓存结果，不再维护本地状态
+  const aiResult = cachedAiResult || null;
 
   if (!report) return (
     <div className="space-y-10 animate-in fade-in duration-700">
@@ -81,9 +88,12 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
   );
 
   const handleAiAnalysis = async () => {
+    setIsAiPanelOpen(true); // 点击生成时，强制展开面板
     setIsAiLoading(true);
     const advice = await generateAIAdvice(report, config.aiConfig);
-    setAiResult(advice);
+    if (onUpdateAiResult) {
+        onUpdateAiResult(advice);
+    }
     setIsAiLoading(false);
   };
 
@@ -182,11 +192,21 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
       </div>
 
       {aiResult && (
-        <div className="tactical-card p-10 rounded-[2.5rem] bg-indigo-500/5 border border-indigo-500/20 animate-in zoom-in-95 duration-500 relative group">
-           <div className="flex justify-between items-start mb-6">
-              <h3 className="text-xl font-black italic uppercase flex items-center gap-3 text-indigo-400">
-                <MessageSquareText size={22} /> AI 审计顾问意见书
-              </h3>
+        <div className={`tactical-card rounded-[2.5rem] bg-indigo-500/5 border border-indigo-500/20 animate-in zoom-in-95 duration-500 relative group transition-all overflow-hidden ${isAiPanelOpen ? 'p-10' : 'p-6 py-8'}`}>
+           <div className="flex justify-between items-start">
+              <div 
+                 className="flex-1 cursor-pointer"
+                 onClick={() => setIsAiPanelOpen(!isAiPanelOpen)}
+              >
+                  <h3 className="text-xl font-black italic uppercase flex items-center gap-3 text-indigo-400">
+                    <MessageSquareText size={22} /> AI 审计顾问意见书
+                    {!isAiPanelOpen && (
+                        <span className="text-[10px] text-white/30 font-bold not-italic bg-white/5 px-2 py-1 rounded ml-2">
+                           点击展开查看详情...
+                        </span>
+                    )}
+                  </h3>
+              </div>
               <div className="flex items-center gap-2">
                 <button 
                   onClick={handleDownloadMD} 
@@ -203,14 +223,31 @@ const ResultsView: React.FC<ResultsViewProps> = ({ report, config }) => {
                   <FileText size={18} />
                 </button>
                 <div className="w-px h-4 bg-white/10 mx-1"></div>
-                <button onClick={() => setAiResult(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white">
+                
+                {/* 新增：折叠/展开按钮 */}
+                <button 
+                  onClick={() => setIsAiPanelOpen(!isAiPanelOpen)} 
+                  className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white/40 hover:text-white"
+                  title={isAiPanelOpen ? "折叠面板" : "展开面板"}
+                >
+                  {isAiPanelOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+
+                <button 
+                  onClick={() => onUpdateAiResult && onUpdateAiResult(null)} 
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/40 hover:text-white"
+                  title="清空记录"
+                >
                   <X size={18} />
                 </button>
               </div>
            </div>
-           <div className="prose prose-invert prose-indigo max-w-none font-bold text-sm text-white/70 leading-relaxed italic whitespace-pre-wrap">
-              {aiResult}
-           </div>
+           
+           {isAiPanelOpen && (
+               <div className="prose prose-invert prose-indigo max-w-none font-bold text-sm text-white/70 leading-relaxed italic whitespace-pre-wrap mt-6 animate-in slide-in-from-top-2 fade-in">
+                  {aiResult}
+               </div>
+           )}
         </div>
       )}
 

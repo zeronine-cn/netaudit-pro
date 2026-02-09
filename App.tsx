@@ -23,6 +23,10 @@ function App() {
   });
   const [scanHistory, setScanHistory] = useState<ScanReport[]>([]);
   
+  // 新增：AI 结果缓存池，用于在切换视图时保留 AI 分析记录
+  // Key: report.id (优先) 或 target_timestamp
+  const [aiCache, setAiCache] = useState<Record<string, string>>({});
+
   const [scanLogs, setScanLogs] = useState<{msg: string, type: 'info' | 'warn' | 'error' | 'success' | 'system'}[]>(() => {
     const savedLogs = localStorage.getItem('netaudit_logs');
     return savedLogs ? JSON.parse(savedLogs) : [];
@@ -205,6 +209,26 @@ function App() {
     });
   };
 
+  // 辅助函数：生成报告唯一键
+  const getReportKey = (r: ScanReport) => {
+    if (r.id) return String(r.id);
+    return `${r.target}_${r.timestamp}`;
+  };
+
+  // 处理 AI 结果更新
+  const handleUpdateAiCache = (val: string | null) => {
+    if (!report) return;
+    const key = getReportKey(report);
+    setAiCache(prev => {
+      if (val === null) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: val };
+    });
+  };
+
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />;
   }
@@ -251,7 +275,15 @@ function App() {
               );
             case 'history': return <HistoryView history={scanHistory} onSelect={handleSelectHistory} onDelete={handleDeleteHistory} onImport={handleImportHistory} onRefresh={fetchHistory} apiBaseUrl={config.apiBaseUrl} />;
             case 'dicts': return <DictWarehouseView config={config} setConfig={setConfig} />;
-            case 'results': return <ResultsView report={report} config={config} />;
+            case 'results': 
+              return (
+                <ResultsView 
+                  report={report} 
+                  config={config} 
+                  cachedAiResult={report ? aiCache[getReportKey(report)] : null}
+                  onUpdateAiResult={handleUpdateAiCache}
+                />
+              );
             case 'topology': return <TopologyView report={report} />;
             case 'compliance': return <ComplianceView report={report} />;
             case 'report': return <ReportView report={report} config={config} />;
