@@ -73,7 +73,7 @@ const Dock: React.FC<DockProps> = ({ currentView, setCurrentView, onLogout }) =>
   return (
     <div 
       ref={dockRef}
-      className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-50 transition-transform duration-75 ease-out ${isDragging ? 'scale-[1.05]' : ''}`}
+      className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-50 transition-transform duration-75 ease-out print:hidden ${isDragging ? 'scale-[1.05]' : ''}`}
       style={{ 
         transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
       }}

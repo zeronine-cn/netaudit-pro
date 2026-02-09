@@ -1,7 +1,7 @@
 
-import React, { useState, useRef } from 'react';
-import { ScanReport, AppConfig, RiskLevel } from '../types';
-import { Database, FileJson, Loader2, FileText, Printer, FileCode, ShieldCheck, Download, Zap, ShieldAlert, Cpu, Lock, Terminal, Shield, UserCheck, FileSpreadsheet } from 'lucide-react';
+import React, { useState } from 'react';
+import { ScanReport, AppConfig } from '../types';
+import { Database, FileJson, Loader2, FileCode, ShieldCheck, Printer, FileSpreadsheet } from 'lucide-react';
 
 interface ReportViewProps {
   report: ScanReport | null;
@@ -10,7 +10,6 @@ interface ReportViewProps {
 
 const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
   const [isExporting, setIsExporting] = useState<string | null>(null);
-  const pdfRef = useRef<HTMLDivElement>(null);
 
   // 辅助函数：确保 IP 地址中的点是标准半角点
   const formatIP = (ip: string) => {
@@ -75,31 +74,9 @@ const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
     };
   };
 
-  const downloadPdf = () => {
-    if (!report || !pdfRef.current) return;
-    setIsExporting('PDF_CLIENT');
-
-    const element = pdfRef.current;
-    const sanitizedIp = formatIP(report.target).replace(/\./g, '_');
-    
-    const opt = {
-      margin: 0, // 页面边距由 CSS 控制
-      filename: `DJBH_Report_${sanitizedIp}_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg', quality: 1 }, // 最高质量
-      html2canvas: { 
-        scale: 2, // 提高清晰度
-        useCORS: true, 
-        backgroundColor: '#ffffff',
-        letterRendering: true
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['avoid-all', 'css', 'legacy'] } // 优化分页
-    };
-
-    // @ts-ignore
-    window.html2pdf().set(opt).from(element).save().then(() => {
-      setIsExporting(null);
-    });
+  // 使用原生浏览器打印，获取矢量级完美 PDF
+  const handlePrint = () => {
+    window.print();
   };
 
   const downloadMarkdown = () => {
@@ -193,41 +170,11 @@ ${report.defects.map(d => `
     }
   };
 
-  const downloadPdfReport = async () => {
-    if (!report || !report.id) return;
-    setIsExporting('PDF_SERVER');
-    
-    try {
-      const apiBaseUrl = config?.apiBaseUrl || 'http://localhost:8000';
-      const response = await fetch(`${apiBaseUrl}/api/report/pdf/${report.id}`, {
-        method: 'POST',
-      });
-      
-      if (!response.ok) {
-        throw new Error('生成 PDF 报告失败');
-      }
-      
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const sanitizedIp = formatIP(report.target).replace(/\./g, '_');
-      a.download = `NetAudit_Report_${sanitizedIp}_${Date.now()}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (error) {
-      console.error('下载 PDF 报告失败:', error);
-      alert('下载 PDF 报告失败，请稍后重试');
-    } finally {
-      setIsExporting(null);
-    }
-  };
-
+  // 已移除 PDF_SERVER 方式，因为 window.print() 效果更好且离线
+  
   if (!report) {
     return (
-      <div className="flex flex-col items-center justify-center h-[600px] tactical-card rounded-[4rem] border-dashed border-white/5 relative overflow-hidden bg-black/20">
+      <div className="flex flex-col items-center justify-center h-[600px] tactical-card rounded-[4rem] border-dashed border-white/5 relative overflow-hidden bg-black/20 print:hidden">
         <Database size={48} className="text-white/10 mb-6 animate-pulse" />
         <span className="text-xs font-black uppercase tracking-[0.5em] text-white/20 italic">报告归档库空置</span>
       </div>
@@ -241,121 +188,137 @@ ${report.defects.map(d => `
   const reportCode = `DJBH-${new Date().getFullYear()}-${report.timestamp.replace(/[-: ]/g, '').substring(0, 14)}`;
 
   return (
-    <div className="space-y-12 animate-in fade-in duration-1000 max-w-5xl mx-auto pb-20">
-      <div className="tactical-card rounded-[3.5rem] border border-white/10 overflow-hidden relative group shadow-2xl">
-        <div className="absolute inset-0 scanline-container opacity-10 pointer-events-none"></div>
-        
-        <div className="p-12 md:p-16 flex flex-col items-center text-center relative z-10">
-          <div className="w-24 h-24 bg-brand/10 border border-brand/20 rounded-3xl flex items-center justify-center mb-10 shadow-xl">
-            <ShieldCheck size={50} className="text-brand" />
-          </div>
+    <>
+      {/* 屏幕显示区域 (打印时隐藏) */}
+      <div className="space-y-12 animate-in fade-in duration-1000 max-w-5xl mx-auto pb-20 print:hidden">
+        <div className="tactical-card rounded-[3.5rem] border border-white/10 overflow-hidden relative group shadow-2xl">
+          <div className="absolute inset-0 scanline-container opacity-10 pointer-events-none"></div>
           
-          <h2 className="text-6xl font-black italic uppercase tracking-tighter glow-text mb-2">档案导出终端</h2>
-          <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.6em] mb-12">DEEP ARCHIVE EXPORT TERMINAL</p>
+          <div className="p-12 md:p-16 flex flex-col items-center text-center relative z-10">
+            <div className="w-24 h-24 bg-brand/10 border border-brand/20 rounded-3xl flex items-center justify-center mb-10 shadow-xl">
+              <ShieldCheck size={50} className="text-brand" />
+            </div>
+            
+            <h2 className="text-6xl font-black italic uppercase tracking-tighter glow-text mb-2">档案导出终端</h2>
+            <p className="text-[10px] font-bold text-white/20 uppercase tracking-[0.6em] mb-12">DEEP ARCHIVE EXPORT TERMINAL</p>
 
-          <div className="w-full max-w-3xl grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-              <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
-                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">设备名称</span>
-                  <span className="text-xs font-bold text-white truncate block">{meta.assetName}</span>
-              </div>
-              <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
-                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">等保等级</span>
-                  <span className="text-xs font-bold text-brand block">{meta.securityLevel}</span>
-              </div>
-              <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
-                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">物理位置</span>
-                  <span className="text-xs font-bold text-white/60 truncate block">{meta.location}</span>
-              </div>
-              <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
-                  <span className="text-[8px] font-black text-white/20 uppercase block mb-1">测评员</span>
-                  <span className="text-xs font-bold text-info block">{meta.evaluator}</span>
-              </div>
-          </div>
+            <div className="w-full max-w-3xl grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <span className="text-[8px] font-black text-white/20 uppercase block mb-1">设备名称</span>
+                    <span className="text-xs font-bold text-white truncate block">{meta.assetName}</span>
+                </div>
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <span className="text-[8px] font-black text-white/20 uppercase block mb-1">等保等级</span>
+                    <span className="text-xs font-bold text-brand block">{meta.securityLevel}</span>
+                </div>
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <span className="text-[8px] font-black text-white/20 uppercase block mb-1">物理位置</span>
+                    <span className="text-xs font-bold text-white/60 truncate block">{meta.location}</span>
+                </div>
+                <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-left">
+                    <span className="text-[8px] font-black text-white/20 uppercase block mb-1">测评员</span>
+                    <span className="text-xs font-bold text-info block">{meta.evaluator}</span>
+                </div>
+            </div>
 
-          <div className="flex flex-wrap justify-center gap-6 w-full">
-             <button onClick={downloadWordReport} disabled={!!isExporting} className="group relative px-10 py-6 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 min-w-[260px] shadow-lg">
-               {isExporting === 'WORD' ? <Loader2 size={20} className="animate-spin" /> : <FileSpreadsheet size={20} />}
-               <div className="text-left">
-                 <span className="block leading-none">等保 Word 报告</span>
-                 <span className="text-[8px] opacity-80 font-bold block mt-1 tracking-widest uppercase">GB/T 22239-2019</span>
-               </div>
-             </button>
-             <button onClick={downloadPdf} disabled={!!isExporting} className="group relative px-10 py-6 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:from-red-700 hover:to-red-600 transition-all disabled:opacity-50 min-w-[260px] shadow-lg">
-               {isExporting === 'PDF_CLIENT' ? <Loader2 size={20} className="animate-spin" /> : <Printer size={20} />}
-               <div className="text-left">
-                 <span className="block leading-none">等保 PDF 报告</span>
-                 <span className="text-[8px] opacity-80 font-bold block mt-1 tracking-widest uppercase">Standard Compliance</span>
-               </div>
-             </button>
-             <button onClick={downloadMarkdown} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
-               {isExporting === 'MD' ? <Loader2 size={20} className="animate-spin" /> : <FileCode size={20} className="text-info" />}
-               <div className="text-left">
-                 <span className="block leading-none">导出 Markdown</span>
-                 <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest uppercase">Security Document</span>
-               </div>
-             </button>
-             <button onClick={exportToJson} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
-               {isExporting === 'JSON' ? <Loader2 size={20} className="animate-spin" /> : <FileJson size={20} className="text-brand" />}
-               <div className="text-left">
-                 <span className="block leading-none">JSON 数据流</span>
-                 <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest uppercase">System Raw Data</span>
-               </div>
-             </button>
+            <div className="flex flex-wrap justify-center gap-6 w-full">
+               <button onClick={downloadWordReport} disabled={!!isExporting} className="group relative px-10 py-6 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:from-blue-700 hover:to-blue-600 transition-all disabled:opacity-50 min-w-[260px] shadow-lg">
+                 {isExporting === 'WORD' ? <Loader2 size={20} className="animate-spin" /> : <FileSpreadsheet size={20} />}
+                 <div className="text-left">
+                   <span className="block leading-none">等保 Word 报告</span>
+                   <span className="text-[8px] opacity-80 font-bold block mt-1 tracking-widest uppercase">GB/T 22239-2019</span>
+                 </div>
+               </button>
+               {/* 原生打印按钮 */}
+               <button onClick={handlePrint} className="group relative px-10 py-6 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:from-red-700 hover:to-red-600 transition-all min-w-[260px] shadow-lg">
+                 <Printer size={20} />
+                 <div className="text-left">
+                   <span className="block leading-none">PDF / 打印报告</span>
+                   <span className="text-[8px] opacity-80 font-bold block mt-1 tracking-widest uppercase">Native Vector Print</span>
+                 </div>
+               </button>
+               <button onClick={downloadMarkdown} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
+                 {isExporting === 'MD' ? <Loader2 size={20} className="animate-spin" /> : <FileCode size={20} className="text-info" />}
+                 <div className="text-left">
+                   <span className="block leading-none">导出 Markdown</span>
+                   <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest uppercase">Security Document</span>
+                 </div>
+               </button>
+               <button onClick={exportToJson} disabled={!!isExporting} className="px-10 py-6 bg-white/5 border border-white/10 text-white rounded-2xl font-black uppercase italic text-sm flex items-center gap-4 hover:bg-white/10 transition-all min-w-[260px]">
+                 {isExporting === 'JSON' ? <Loader2 size={20} className="animate-spin" /> : <FileJson size={20} className="text-brand" />}
+                 <div className="text-left">
+                   <span className="block leading-none">JSON 数据流</span>
+                   <span className="text-[8px] opacity-40 font-bold block mt-1 tracking-widest uppercase">System Raw Data</span>
+                 </div>
+               </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* =====================================================================================
-          PDF 模板：严格复刻 GB/T 22239 标准报告样式
+          打印专用视图 (屏幕隐藏，打印时显示)
           ===================================================================================== */}
-      <div className="fixed -left-[5000px] top-0 pointer-events-none">
+      <div className="hidden print:block print:absolute print:inset-0 print:bg-white print:z-[9999] text-black">
+        {/* 覆盖全局样式，确保打印格式正确 */}
+        <style type="text/css" media="print">
+           {`
+             @page { size: auto; margin: 0; }
+             body { padding: 0; margin: 0; background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+           `}
+        </style>
+        
+        {/* 核心容器：设置 20mm 边距 (padding) */}
         <div 
-           ref={pdfRef} 
-           className="w-[210mm] min-h-[297mm] bg-white text-black font-serif leading-normal relative text-sm"
+           className="w-full bg-white text-black font-serif leading-normal relative text-sm p-[20mm] box-border"
            style={{ fontFamily: '"SimSun", "Songti SC", serif' }}
         >
           {/* --- 封面页 --- */}
-          <div className="h-[297mm] flex flex-col justify-center items-center p-16 relative page-break-after-always">
+          <div className="min-h-[260mm] flex flex-col justify-center items-center relative break-after-page">
              <h1 className="text-[34px] font-bold text-center mb-32 tracking-wider" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>
                信息系统安全等级保护测评报告
              </h1>
 
-             <table className="w-full border-collapse border border-gray-400 text-base">
+             <table className="w-full border-collapse border border-black text-base">
                 <tbody>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold w-1/3">报告编号</td>
-                      <td className="border border-gray-400 p-4">{reportCode}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold w-1/3">报告编号</td>
+                      <td className="border border-black p-4">{reportCode}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">系统/设备名称</td>
-                      <td className="border border-gray-400 p-4">{meta.assetName}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">系统/设备名称</td>
+                      <td className="border border-black p-4">{meta.assetName}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">目标地址</td>
-                      <td className="border border-gray-400 p-4">{formatIP(report.target)}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">目标地址</td>
+                      <td className="border border-black p-4">{formatIP(report.target)}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">系统定级</td>
-                      <td className="border border-gray-400 p-4">{meta.securityLevel}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">系统定级</td>
+                      <td className="border border-black p-4">{meta.securityLevel}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">物理位置</td>
-                      <td className="border border-gray-400 p-4">{meta.location}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">物理位置</td>
+                      <td className="border border-black p-4">{meta.location}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">测评负责人</td>
-                      <td className="border border-gray-400 p-4">{meta.evaluator}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">测评负责人</td>
+                      <td className="border border-black p-4">{meta.evaluator}</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-4 bg-gray-50 font-bold">测评时间</td>
-                      <td className="border border-gray-400 p-4">{report.timestamp}</td>
+                      <td className="border border-black p-4 bg-gray-100 font-bold">测评时间</td>
+                      <td className="border border-black p-4">{report.timestamp}</td>
                    </tr>
                 </tbody>
              </table>
+             
+             <div className="absolute bottom-0 text-center text-xs text-gray-500 w-full">
+                Generated by NetAudit Pro
+             </div>
           </div>
 
           {/* --- 第一章：测评结果概述 --- */}
-          <div className="p-12 min-h-[297mm] relative page-break-after-always">
+          <div className="min-h-[50mm] relative break-after-page">
              <h2 className="text-2xl font-bold mb-8" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>第一章 测评结果概述</h2>
              
              <div className="mb-8 text-base">
@@ -368,101 +331,87 @@ ${report.defects.map(d => `
 
              <div className="mb-4 font-bold">本次测评共发现 {report.defects.length} 个安全问题：</div>
              
-             <table className="w-full border-collapse border border-gray-400 text-center mb-10">
+             <table className="w-full border-collapse border border-black text-center mb-10">
                 <thead>
-                   <tr className="bg-[#4a90e2] text-white">
-                      <th className="border border-gray-400 p-3 font-bold w-1/4">风险等级</th>
-                      <th className="border border-gray-400 p-3 font-bold w-1/4">数量</th>
-                      <th className="border border-gray-400 p-3 font-bold w-1/4">占比</th>
-                      <th className="border border-gray-400 p-3 font-bold w-1/4">整改期限</th>
+                   <tr className="bg-[#4a90e2] text-white print:bg-[#4a90e2] print:text-white">
+                      <th className="border border-black p-3 font-bold w-1/4">风险等级</th>
+                      <th className="border border-black p-3 font-bold w-1/4">数量</th>
+                      <th className="border border-black p-3 font-bold w-1/4">占比</th>
+                      <th className="border border-black p-3 font-bold w-1/4">整改期限</th>
                    </tr>
                 </thead>
                 <tbody>
                    <tr>
-                      <td className="border border-gray-400 p-3">高危</td>
-                      <td className="border border-gray-400 p-3 text-red-600 font-bold">{riskStats.high.count}</td>
-                      <td className="border border-gray-400 p-3">{riskStats.high.pct}</td>
-                      <td className="border border-gray-400 p-3">7天内</td>
+                      <td className="border border-black p-3">高危</td>
+                      <td className="border border-black p-3 text-red-600 font-bold">{riskStats.high.count}</td>
+                      <td className="border border-black p-3">{riskStats.high.pct}</td>
+                      <td className="border border-black p-3">7天内</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-3">中危</td>
-                      <td className="border border-gray-400 p-3 text-orange-600 font-bold">{riskStats.medium.count}</td>
-                      <td className="border border-gray-400 p-3">{riskStats.medium.pct}</td>
-                      <td className="border border-gray-400 p-3">30天内</td>
+                      <td className="border border-black p-3">中危</td>
+                      <td className="border border-black p-3 text-orange-600 font-bold">{riskStats.medium.count}</td>
+                      <td className="border border-black p-3">{riskStats.medium.pct}</td>
+                      <td className="border border-black p-3">30天内</td>
                    </tr>
                    <tr>
-                      <td className="border border-gray-400 p-3">低危</td>
-                      <td className="border border-gray-400 p-3 text-blue-600 font-bold">{riskStats.low.count}</td>
-                      <td className="border border-gray-400 p-3">{riskStats.low.pct}</td>
-                      <td className="border border-gray-400 p-3">60天内</td>
+                      <td className="border border-black p-3">低危</td>
+                      <td className="border border-black p-3 text-blue-600 font-bold">{riskStats.low.count}</td>
+                      <td className="border border-black p-3">{riskStats.low.pct}</td>
+                      <td className="border border-black p-3">60天内</td>
                    </tr>
                 </tbody>
              </table>
           </div>
 
           {/* --- 第二章：安全技术测评详情 --- */}
-          <div className="p-12 relative">
+          <div className="relative">
              <h2 className="text-2xl font-bold mb-8" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>第二章 安全技术测评详情</h2>
              
              {Object.entries(groupedDefects).map(([domain, defects], domainIndex) => (
                 <div key={domain} className="mb-8">
-                   <h3 className="text-xl font-bold mb-6 mt-4 border-b-2 border-gray-200 pb-2" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>
+                   <h3 className="text-xl font-bold mb-6 mt-4 border-b-2 border-gray-300 pb-2 break-after-avoid" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>
                       {domainIndex + 1}. {domain}
                    </h3>
                    
                    {defects.map((d, i) => (
-                      <div key={i} className="mb-8 break-inside-avoid">
-                         <table className="w-full border-collapse border border-gray-400 text-sm">
-                            <tbody>
-                               {/* 标题行：问题描述 */}
-                               <tr>
-                                  <td colSpan={2} className="border border-gray-400 p-2 bg-gray-100 font-bold">
-                                     问题 #{i + 1}：{d.check_item}
-                                  </td>
-                               </tr>
-                               {/* 风险等级 */}
-                               <tr>
-                                  <td className="border border-gray-400 p-2 w-32 font-bold text-center bg-gray-50 align-middle">风险等级</td>
-                                  <td className={`border border-gray-400 p-2 font-bold align-middle ${d.risk_level === '高危' ? 'text-red-600' : d.risk_level === '中危' ? 'text-orange-600' : 'text-blue-600'}`}>
-                                     {d.risk_level}
-                                  </td>
-                               </tr>
-                               {/* 检测协议 */}
-                               <tr>
-                                  <td className="border border-gray-400 p-2 font-bold text-center bg-gray-50 align-middle">检测协议</td>
-                                  <td className="border border-gray-400 p-2 align-middle">{d.protocol}</td>
-                               </tr>
-                               {/* 涉及条款 */}
-                               <tr>
-                                  <td className="border border-gray-400 p-2 font-bold text-center bg-gray-50 align-middle">涉及条款</td>
-                                  <td className="border border-gray-400 p-2 align-middle">{d.mlps_clause}</td>
-                               </tr>
-                               {/* 问题描述 */}
-                               <tr>
-                                  <td className="border border-gray-400 p-2 font-bold text-center bg-gray-50 align-middle">问题描述</td>
-                                  <td className="border border-gray-400 p-2 align-middle">{d.description}</td>
-                               </tr>
-                               {/* 整改建议 */}
-                               <tr>
-                                  <td className="border border-gray-400 p-2 font-bold text-center bg-gray-50 align-middle">整改建议</td>
-                                  <td className="border border-gray-400 p-2 align-middle">{d.suggestion}</td>
-                               </tr>
-                            </tbody>
-                         </table>
+                      <div key={i} className="mb-8 break-inside-avoid border border-gray-300 p-4 rounded bg-gray-50/50">
+                         <div className="font-bold mb-3 text-base border-b border-gray-200 pb-2">问题 #{i + 1}：{d.check_item}</div>
+                         <div className="pl-2 space-y-2 text-sm">
+                            <div className="grid grid-cols-[80px_1fr]">
+                               <span className="font-bold">风险等级：</span>
+                               <span className={d.risk_level === '高危' ? 'text-red-600 font-bold' : d.risk_level === '中危' ? 'text-orange-600 font-bold' : 'text-blue-600'}>{d.risk_level}</span>
+                            </div>
+                            <div className="grid grid-cols-[80px_1fr]">
+                               <span className="font-bold">检测协议：</span>
+                               <span>{d.protocol}</span>
+                            </div>
+                            <div className="grid grid-cols-[80px_1fr]">
+                               <span className="font-bold">涉及条款：</span>
+                               <span>{d.mlps_clause}</span>
+                            </div>
+                            <div className="grid grid-cols-[80px_1fr]">
+                               <span className="font-bold">问题描述：</span>
+                               <span>{d.description}</span>
+                            </div>
+                            <div className="grid grid-cols-[80px_1fr]">
+                               <span className="font-bold">整改建议：</span>
+                               <span>{d.suggestion}</span>
+                            </div>
+                         </div>
                       </div>
                    ))}
                 </div>
              ))}
 
              {report.defects.length === 0 && (
-                <div className="p-10 text-center border border-dashed border-gray-300 rounded">
+                <div className="p-10 text-center border border-dashed border-gray-400 rounded">
                    本系统符合安全技术要求，未发现明显安全隐患。
                 </div>
              )}
           </div>
 
           {/* --- 第三章：结论 --- */}
-           <div className="p-12 relative page-break-before-always break-inside-avoid">
+           <div className="relative break-before-page break-inside-avoid pt-8">
              <h2 className="text-2xl font-bold mb-8" style={{ fontFamily: '"SimHei", "Heiti SC", sans-serif' }}>第三章 测评结论与整改要求</h2>
              <div className="space-y-4 text-base leading-relaxed">
                 <p>经 NetAudit Pro v3.2 自动化测评，该信息系统的综合安全评分为 <span className="font-bold">{report.score} 分</span>。</p>
@@ -482,7 +431,7 @@ ${report.defects.map(d => `
 
         </div>
       </div>
-    </div>
+    </>
   );
 };
 

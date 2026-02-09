@@ -235,7 +235,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-black text-white font-mono selection:bg-brand selection:text-black overflow-x-hidden">
-      <div className="fixed top-0 left-0 right-0 z-[60] px-8 py-4 flex justify-between items-center bg-black/40 backdrop-blur-xl border-b border-white/5">
+      <div className="fixed top-0 left-0 right-0 z-[60] px-8 py-4 flex justify-between items-center bg-black/40 backdrop-blur-xl border-b border-white/5 print:hidden">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <div className="w-2 h-2 rounded-full bg-brand animate-pulse"></div>
@@ -258,7 +258,7 @@ function App() {
         </div>
       </div>
 
-      <main className="pt-24 pb-40 px-6 max-w-[1400px] mx-auto animate-in fade-in duration-1000">
+      <main className="pt-24 pb-40 px-6 max-w-[1400px] mx-auto animate-in fade-in duration-1000 print:p-0 print:m-0 print:w-full print:max-w-none">
         {(() => {
           switch (currentView) {
             case 'dashboard': return <Dashboard report={report} scanHistory={scanHistory} onSelectReport={handleSelectHistory} />;
