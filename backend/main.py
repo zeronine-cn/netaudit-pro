@@ -1,8 +1,7 @@
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Any
 import uvicorn
@@ -10,7 +9,6 @@ import time
 import socket
 import json
 import uuid
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import asynccontextmanager
 
@@ -21,6 +19,7 @@ from core.analyzer import SecurityAnalyzer
 import database
 
 # 引入所有 Scanner 模块功能
+# 注意：scan_http 已被 scan_web_service 替代用于主逻辑
 from scanners.web_scan import scan_web_service, fetch_url_headers
 from scanners.sys_scan import check_ssh_banner, brute_force_ssh
 from scanners.db_scan import scan_mysql, scan_redis, scan_postgres, scan_mongodb, brute_force_mysql
@@ -58,7 +57,9 @@ class ScanRequest(BaseModel):
     dictionaries: Dict[str, str]
     mode: str = "快速扫描"
     enable_brute: bool = False
+    # 新增：爆破协议列表，用于弱口令扫描的精细化控制 (SSH, MySQL)
     brute_protocols: List[str] = ["SSH", "MySQL"]
+    # 目标协议列表，用于精细化控制 (功能预留)
     target_protocols: List[str] = ["SSH", "Web", "Database", "DNS"]
     metadata: Optional[Dict[str, str]] = {}
 
@@ -67,18 +68,27 @@ class HeaderDebugRequest(BaseModel):
 
 @app.post("/api/tools/headers")
 async def debug_headers(req: HeaderDebugRequest):
+    """
+    前端工具箱专用：获取指定 URL 的 Headers 并分析
+    """
     if not req.url.startswith("http"):
         return {"error": "Invalid URL, must start with http:// or https://"}
     return fetch_url_headers(req.url)
 
 def parse_port_config(config_str: str) -> List[int]:
+    """解析端口配置字符串，支持 '80, 8080', '80-90' 及中文逗号"""
     ports = set()
     if not config_str:
         return []
+    
+    # 兼容中文逗号
     config_str = config_str.replace('，', ',')
+    
     for p in config_str.split(','):
         p = p.strip()
         if not p: continue
+        
+        # 支持端口范围，例如 8000-8010
         if '-' in p:
             try:
                 parts = p.split('-')
@@ -91,9 +101,11 @@ def parse_port_config(config_str: str) -> List[int]:
                 pass
         elif p.isdigit():
             ports.add(int(p))
+            
     return sorted(list(ports))
 
 def probe_port(ip: str, port: int) -> bool:
+    """简单的 TCP 端口存活探测"""
     try:
         with socket.create_connection((ip, port), timeout=0.5) as s:
             return True
@@ -105,14 +117,20 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         def update_progress(pct, log):
             task_store[task_id]["progress"] = {"percent": pct, "log": log}
 
+        # 为了方便传递给子模块，定义一个只接受 msg 的简单回调
         def log_callback(msg):
+            # 百分比保持不变，只更新消息
             update_progress(task_store[task_id]["progress"]["percent"], msg)
+            # 增加微小延时，让前端 250ms 轮询能抓到这条日志
             time.sleep(0.2)
 
         target_ip = request.target
+        # Metasploit 风格初始化日志
         update_progress(1, f"[*] Started audit module on {request.target}")
         
+        # 协议范围确认
         enabled_protos = request.target_protocols
+        #update_progress(2, f"[*] Target Protocols: {', '.join(enabled_protos)}")
         
         try:
             update_progress(3, f"[*] Resolving host {request.target}...")
@@ -126,6 +144,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
 
         target_ports = parse_port_config(request.port_range)
         
+        # 端口配置
         ssh_ports = parse_port_config(request.ports_config.get('ssh', '22'))
         http_ports = parse_port_config(request.ports_config.get('http', '80,8080'))
         https_ports = parse_port_config(request.ports_config.get('https', '443,8443'))
@@ -135,6 +154,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         postgres_ports = parse_port_config(request.ports_config.get('postgres', '5432'))
         mongo_ports = parse_port_config(request.ports_config.get('mongodb', '27017'))
 
+        # 字典解析
         users = [u.strip() for u in request.dictionaries.get('usernames', '').split('\n') if u.strip()]
         passwords = [p.strip() for p in request.dictionaries.get('passwords', '').split('\n') if p.strip()]
         
@@ -144,6 +164,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
         if len(target_ports) == 0:
             raise Exception("No ports specified")
 
+        # --- 端口扫描 ---
         update_progress(6, f"[*] Sending TCP SYN packets to {len(target_ports)} ports...")
         
         active_ports = []
@@ -153,6 +174,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 p = future_to_port[future]
                 if future.result():
                     active_ports.append(p)
+                    # 实时发现日志
                     update_progress(8, f"[+] Discovered open port {p}/tcp")
         
         active_ports.sort()
@@ -162,15 +184,19 @@ def run_deep_scan(task_id: str, request: ScanRequest):
             update_progress(100, f"[-] No active ports found. Module execution aborted.")
             return
 
+        # --- 深度扫描 ---
         total_active = len(active_ports)
         
         for idx, port in enumerate(active_ports):
             progress_pct = 15 + int((idx / total_active) * 80)
+            
+            # 更新进度以便 log_callback 使用正确的值
             task_store[task_id]["progress"]["percent"] = progress_pct
             
             current_protocol = "TCP"
             service_detail = "Unknown Service"
             
+            # 1. SSH
             if port in ssh_ports and "SSH" in enabled_protos:
                 current_protocol = "SSH"
                 update_progress(progress_pct, f"[*] Running auxiliary/scanner/ssh/ssh_version on port {port}...")
@@ -179,13 +205,17 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 update_progress(progress_pct, f"[+] SSH Banner: {banner}")
                 time.sleep(0.3)
                 
+                # 移除硬编码的 OS Info Leak 日志，交给 analyzer 统一处理
+
                 weak_creds = []
+                # 弱口令审计逻辑
                 if request.mode == "深度审计" and request.enable_brute and "SSH" in request.brute_protocols and users and passwords:
                     update_progress(progress_pct, f"[*] Starting SSH brute force on {target_ip}:{port}...")
                     time.sleep(0.3)
                     weak_creds = brute_force_ssh(target_ip, port, users, passwords, callback=log_callback)
                     if weak_creds:
                         cred = weak_creds[0]
+                        # 成功日志保留，因为这是过程中的高光时刻
                         update_progress(progress_pct, f"[+] Success: '{cred['user']}:{cred['pass']}'")
                         update_progress(progress_pct, f"[!] Command shell session 1 opened ({target_ip}:{port})")
                         time.sleep(1)
@@ -193,13 +223,16 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service("SSH", port, banner, {"weak_creds": weak_creds})
                 all_findings.extend(findings)
 
+            # 2. Web (HTTP/HTTPS)
             elif (port in http_ports or port in https_ports) and "Web" in enabled_protos:
                 def web_progress_callback(msg):
                     update_progress(progress_pct, msg)
+                    # 关键修改：增加 Web 扫描过程日志的可见性
                     time.sleep(0.2)
 
                 update_progress(progress_pct, f"[*] Initiating web scan on port {port}...")
                 
+                # 执行综合扫描
                 scan_result = scan_web_service(
                     target_ip=target_ip,
                     port=port,
@@ -212,6 +245,9 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 service_detail = scan_result["banner"]
                 extra_data = scan_result["extra"]
 
+                # 移除硬编码的 Web 漏洞日志 (Missing headers, directories, expired certs)
+                # 这些将由 analyzer 生成 findings 后统一输出
+
                 for vhost in extra_data["verified_vhosts"]:
                      update_progress(progress_pct, f"[+] Virtual Host identified: {vhost}")
                      time.sleep(0.5)
@@ -219,6 +255,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service(current_protocol, port, service_detail, extra_data)
                 all_findings.extend(findings)
 
+            # 3. DNS
             elif port in dns_ports and "DNS" in enabled_protos:
                 current_protocol = "DNS"
                 service_detail = "DNS Service Active"
@@ -236,6 +273,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service("DNS", port, service_detail, {"dns_results": dns_res})
                 all_findings.extend(findings)
 
+            # 4. MySQL
             elif port in mysql_ports and "Database" in enabled_protos:
                 current_protocol = "MySQL"
                 update_progress(progress_pct, f"[*] Probing MySQL protocol on port {port}...")
@@ -262,6 +300,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service("MySQL", port, service_detail, {"db_results": res, "weak_creds": weak_creds})
                 all_findings.extend(findings)
             
+            # 5. Redis
             elif port in redis_ports and "Database" in enabled_protos:
                 current_protocol = "Redis"
                 update_progress(progress_pct, f"[*] Checking Redis for unauthorized access...")
@@ -274,6 +313,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service("Redis", port, "Redis Server", {"db_results": res})
                 all_findings.extend(findings)
             
+            # 6. PostgreSQL
             elif port in postgres_ports and "Database" in enabled_protos:
                 current_protocol = "PostgreSQL"
                 update_progress(progress_pct, f"[*] Probing PostgreSQL auth on port {port}...")
@@ -282,6 +322,7 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 findings = analyzer.analyze_service("PostgreSQL", port, service_detail, {"db_results": res})
                 all_findings.extend(findings)
 
+            # 7. MongoDB
             elif port in mongo_ports and "Database" in enabled_protos:
                 current_protocol = "MongoDB"
                 update_progress(progress_pct, f"[*] Probing MongoDB auth on port {port}...")
@@ -301,6 +342,8 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 "port": port, "protocol": current_protocol, "status": "OPEN", "detail": service_detail
             })
 
+            # --- 关键情报优先策略 (Critical Intel First) ---
+            # 实时输出该端口发现的中高危漏洞
             port_high_risks = 0
             port_med_risks = 0
             
@@ -308,20 +351,27 @@ def run_deep_scan(task_id: str, request: ScanRequest):
                 risk = f.get('risk_level', 'Info')
                 if risk == '高危':
                     port_high_risks += 1
+                    # 红色高亮格式
                     update_progress(progress_pct, f"[!] CRITICAL: {f.get('check_item')} - {f.get('description')[:50]}...")
+                    # 关键修改：调整为 0.6 秒，配合前端 0.25 秒轮询，确保日志显示足够长的时间，又不至于卡太久
                     time.sleep(0.6) 
                 elif risk == '中危':
                     port_med_risks += 1
+                    # 黄色警告格式
                     update_progress(progress_pct, f"[-] WARN: {f.get('check_item')}")
+                    # 关键修改：调整为 0.6 秒
                     time.sleep(0.6)
             
+            # 端口扫描小结
             if port_high_risks > 0 or port_med_risks > 0:
                 update_progress(progress_pct, f"[*] Port {port} analysis complete. Found {port_high_risks} Critical, {port_med_risks} Warn.")
-                time.sleep(0.6)
+                time.sleep(0.6) # 让小结也能被看到
             else:
+                # 对于无风险端口，显示简洁信息
                 update_progress(progress_pct, f"[*] Port {port} ({current_protocol}) analysis complete. Status: Clean.")
                 time.sleep(0.2)
 
+        # 计算总分
         high_count = len([d for d in all_findings if d["risk_level"] == "高危"])
         if high_count > 0:
              update_progress(96, f"[!] {high_count} critical vulnerabilities identified")
@@ -384,6 +434,9 @@ async def purge_history():
 
 @app.post("/api/report/word/{report_id}")
 async def download_word_report(report_id: int):
+    """
+    生成并下载 Word 格式报告
+    """
     report = database.get_report_by_id(report_id)
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -400,36 +453,12 @@ async def download_word_report(report_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# 安全配置接口：获取服务器端预设密码（如有）
 @app.get("/api/config/security")
 async def get_security_config():
+    # 在真实场景中，这里可以从环境变量或配置文件读取
+    # 为了演示，我们返回一个空对象，让前端使用默认或本地存储的密码
     return {"expected_password": None}
-
-# ==========================================
-# 静态文件服务配置 (生产环境部署关键)
-# ==========================================
-
-# 1. 挂载 assets 静态资源目录
-# 检查 dist/assets 是否存在 (Docker 部署时会由 frontend-builder 生成)
-if os.path.exists("dist/assets"):
-    app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
-
-# 2. 根路由返回 React 的 index.html
-@app.get("/")
-async def read_index():
-    if os.path.exists("dist/index.html"):
-        return FileResponse('dist/index.html')
-    return {"message": "NetAudit API Online. Frontend static files not found."}
-
-# 3. 处理 React Router 的前端路由 (SPA 支持)
-# 任何未匹配 API 的请求都返回 index.html，让前端处理路由
-@app.exception_handler(404)
-async def custom_404_handler(request, exc):
-    if request.url.path.startswith("/api"):
-        return {"detail": "API endpoint not found"}
-    
-    if os.path.exists("dist/index.html"):
-        return FileResponse('dist/index.html')
-    return {"detail": "Not Found"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

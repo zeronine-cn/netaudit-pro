@@ -1,0 +1,131 @@
+
+{
+  "TLS_OLD_PROTO": {
+    "name": "使用了不安全的通信协议",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
+    "description": "检测到服务器启用了 TLS 1.0 或 1.1 老旧协议，这些协议存在已知加密弱点。",
+    "suggestion": "请在 Web 服务器 (Nginx/Apache) 配置中禁用 TLSv1.0/1.1，仅启用 TLSv1.2 和 TLSv1.3。"
+  },
+  "TLS_WEAK_CIPHER": {
+    "name": "启用了不安全的加密套件",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
+    "description": "服务器允许使用 RC4、3DES、DES 或 NULL 等弱加密套件，无法保障通信数据的机密性。",
+    "suggestion": "修改 SSL 配置 (ssl_ciphers)，禁用 RC4/DES/3DES 等弱算法，推荐使用 HIGH:!aNULL:!MD5。"
+  },
+  "TLS_WEAK_CERT": {
+    "name": "数字证书密钥强度不足",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性；应使用合规的加密算法和强度。",
+    "description": "检测到证书公钥长度小于 2048 位，不符合当前安全强度要求，易被暴力破解。",
+    "suggestion": "请重新生成私钥和证书，RSA 密钥长度至少为 2048 位，或使用 ECC 算法。"
+  },
+  "TLS_WEAK_SIGNATURE": {
+    "name": "通信完整性校验不足",
+    "risk_level": "High",
+    "clause_id": "G3-安全通信网络-通信完整性",
+    "clause_content": "应采用校验技术或密码技术保证通信过程中数据的完整性。",
+    "description": "证书使用了弱哈希算法 (如 MD5/SHA1) 进行签名，无法有效防止数据篡改，无法保障通信完整性。",
+    "suggestion": "升级证书签名算法，使用 SHA-256 或更高强度的哈希算法重新颁发证书。"
+  },
+  "HTTP_BANNER_LEAK": {
+    "name": "Web 服务器版本信息泄露",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应最小化安装的组件和应用程序；应隐藏不必要的系统信息。",
+    "description": "HTTP 响应头 'Server' 字段泄露了具体的软件版本号，可被攻击者用于精准利用漏洞。",
+    "suggestion": "修改 Nginx 配置 'server_tokens off;' 或 Apache 'ServerTokens Prod' 以隐藏版本号。"
+  },
+  "HTTP_NO_HTTPS": {
+    "name": "HTTP 服务未启用 HTTPS 跳转",
+    "risk_level": "Low",
+    "clause_id": "G3-安全通信网络-通信保密性",
+    "clause_content": "应采用密码技术保证通信过程中数据的保密性。",
+    "description": "检测到 HTTP 服务未配置自动跳转到 HTTPS，用户可能会因疏忽使用明文传输数据。",
+    "suggestion": "在 Web 服务器中配置 Rewrite 规则，将 HTTP 请求强制重定向至 HTTPS。"
+  },
+  "WEB_SENSITIVE_EXPOSURE": {
+    "name": "Web 敏感目录或文件暴露",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应能够发现可能存在的已知漏洞，并在经过充分测试评估后，及时进行修补；应最小化安装的组件和应用程序。",
+    "description": "探测到敏感路径（如 .git, .env, /admin 等）可直接被外部访问，可能导致源代码或配置信息泄露。",
+    "suggestion": "1. 删除生产环境中的开发测试文件；2. 在 Nginx/Apache 配置中针对敏感后缀或路径设置 'deny all'。"
+  },
+  "WEB_MISSING_HEADERS": {
+    "name": "Web 安全防护响应头缺失",
+    "risk_level": "Low",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应采取措施防范恶意的网络攻击。",
+    "description": "检测到响应头缺失 X-Frame-Options 或 CSP 等防护，容易遭受点击劫持或 XSS 攻击。",
+    "suggestion": "配置 Web 服务器添加：X-Frame-Options: SAMEORIGIN 和 Content-Security-Policy 相关策略。"
+  },
+  "WEB_COOKIE_FLAGS": {
+    "name": "Cookie 安全属性缺失",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "身份鉴别信息应具有不易被冒用的特点，鉴别数据在传输过程中应加密。",
+    "description": "检测到会话 Cookie 缺失 Secure 或 HttpOnly 属性，可能导致 Session 被 XSS 窃取或中间人劫持。",
+    "suggestion": "在 Web 应用或服务器配置中为敏感 Cookie 设置 'Secure' 和 'HttpOnly' 标志。"
+  },
+  "WEB_UNSAFE_METHODS": {
+    "name": "启用了不安全的 HTTP 方法",
+    "risk_level": "Medium",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应最小化安装的组件和应用程序；应关闭不需要的系统服务、默认共享和高危端口。",
+    "description": "Web 服务器启用了 PUT、DELETE 或 TRACE 等不必要的方法，增加了文件上传、删除或跨站追踪攻击的风险。",
+    "suggestion": "仅允许 GET, POST, HEAD 方法。在 Nginx/Apache 中禁用其他非必须方法。"
+  },
+  "WEB_CORS_ANY": {
+    "name": "CORS 跨域配置过度宽松",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-访问控制",
+    "clause_content": "应根据访问控制策略设置访问控制规则，控制粒度应达到主体为用户级或进程级。",
+    "description": "Access-Control-Allow-Origin 设置为 '*'，允许任意域名的网站读取本站资源，存在数据泄露风险。",
+    "suggestion": "严格限制 Access-Control-Allow-Origin 为具体的授信域名白名单，禁止使用通配符 '*'。"
+  },
+  "SSH_WEAK_PASS": {
+    "name": "SSH 弱口令漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "应对登录用户进行身份标识和鉴别，身份鉴别信息应具有复杂度要求并定期更换。",
+    "description": "通过字典攻击成功获取了 SSH 登录凭证，攻击者可直接接管服务器。",
+    "suggestion": "1. 立即修改密码，长度>10位，包含大小写、数字及符号；2. 建议禁用密码登录，改用 SSH 密钥认证。"
+  },
+  "MYSQL_WEAK_PASS": {
+    "name": "MySQL 弱口令漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全计算环境-身份鉴别",
+    "clause_content": "应对登录用户进行身份标识和鉴别，身份鉴别信息应具有复杂度要求并定期更换。",
+    "description": "通过字典攻击成功获取了 MySQL 数据库的登录凭证，攻击者可获取数据库所有权限。",
+    "suggestion": "1. 立即修改数据库密码，设置为强密码；2. 禁止 root 用户远程登录；3. 限制数据库端口访问 IP。"
+  },
+  "SSH_BANNER_LEAK": {
+    "name": "SSH 服务版本泄露",
+    "risk_level": "Low",
+    "clause_id": "G3-安全计算环境-入侵防范",
+    "clause_content": "应隐藏不必要的系统和软件版本信息。",
+    "description": "SSH 连接建立时泄露了 OpenSSH 的具体版本号。",
+    "suggestion": "在 sshd_config 中设置 'DebianBanner no' (部分系统支持) 或通过防火墙限制访问来源。"
+  },
+  "DNS_ZONE_TRANSFER": {
+    "name": "DNS 区域传送漏洞",
+    "risk_level": "High",
+    "clause_id": "G3-安全区域边界-边界防护",
+    "clause_content": "应关闭不需要的系统服务、默认共享和高危端口。",
+    "description": "DNS 服务器允许任意 IP 进行 AXFR 区域传送，导致内网域名拓扑结构完全泄露。",
+    "suggestion": "在 Bind9 配置中限制 'allow-transfer' 仅允许从 DNS 服务器 (Slave DNS) IP 访问。"
+  },
+  "TCP_PORT_OPEN": {
+    "name": "非必要端口开放",
+    "risk_level": "Info",
+    "clause_id": "G3-安全区域边界-访问控制",
+    "clause_content": "应在网络边界或区域之间根据访问控制策略设置访问控制规则。",
+    "description": "检测到端口处于开放状态。若该端口非业务必需，则违反了'默认拒绝'原则。",
+    "suggestion": "请核查该端口是否为业务必需。如果不是，请在防火墙或安全组中关闭该端口。"
+  }
+}

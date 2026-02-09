@@ -1,4 +1,3 @@
-
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { cwd } from 'node:process';
@@ -9,7 +8,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
-    base: '/', // 生产环境通常使用根路径
+    base: './', 
     define: {
       // 关键配置：将 .env 中的 API_KEY 注入到前端代码的 process.env.API_KEY 中
       'process.env.API_KEY': JSON.stringify(env.API_KEY),

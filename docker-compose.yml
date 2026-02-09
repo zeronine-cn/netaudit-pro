@@ -1,4 +1,3 @@
-
 version: '3.8'
 
 services:
@@ -8,9 +7,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # 如果需要 AI 功能，请在此填入 API Key
       - API_KEY=${API_KEY}
     volumes:
-      # 持久化数据库文件到本地 ./data 目录
+      # 非常重要：数据库文件持久化
       - ./data:/app/data
     restart: unless-stopped
