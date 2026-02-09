@@ -49,7 +49,9 @@ const ReportView: React.FC<ReportViewProps> = ({ report, config }) => {
     const now = new Date();
     const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
     
-    const safeIp = formatIP(report.target).replace(/\./g, '_');
+    // 修改：保留 IP 中的点号，不替换为下划线
+    const safeIp = formatIP(report.target);
+    
     // 移除文件名中的非法字符，并将空格替换为下划线
     const safeAssetName = meta.assetName.replace(/\s+/g, '_').replace(/[\\/:*?"<>|]/g, '');
     
